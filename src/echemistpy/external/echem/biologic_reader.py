@@ -111,9 +111,6 @@ class BiologicMPTReader:
             for line in handle:
                 self._process_line(line)
 
-        for name, data in list(self.state.column_data.items()):
-            self.state.column_data[name] = data
-
         if t_str not in self.state.column_data:
             raise BiologicReadError(
                 f"Missing mandatory time column '{t_str}' in {self.path_to_file}"
