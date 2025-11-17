@@ -1,7 +1,7 @@
 """I/O helpers."""
 
 from .loaders import load_table, register_loader
-from .save import save_table
+from .saver import save_table
 from .structures import AnalysisResult, Axis, Measurement, MeasurementMetadata
 
 __all__ = [
