@@ -17,23 +17,22 @@
    & "$env:LOCALAPPDATA\miniconda3\Scripts\conda.exe" create -y -n txm python=3.10
    & "$env:LOCALAPPDATA\miniconda3\Scripts\conda.exe" config --add channels spectrocat
    & "$env:LOCALAPPDATA\miniconda3\Scripts\conda.exe" config --add channels conda-forge
-   & "$env:LOCALAPPDATA\miniconda3\Scripts\conda.exe" install -n txm -y `
-        exspy>=0.3.2 `
-        h5netcdf>=1.6.3 `
-        h5py>=3.14.0 `
-        "hyperspy[all]>=2.3.0" `
-        ipykernel>=6.30.0 `
-        ipympl>=0.9.7 `
-        jupyterlab>=4.4.5 `
-        matplotlib>=3.10.3 `
-        numpy>=2.2.6 `
-        openpyxl>=3.1.5 `
-        ruff>=0.12.4 `
-        scipy>=1.15.3 `
-        seaborn>=0.13.2 `
-        sparse>=0.17.0 `
-        spectrochempy==0.7.1 `
-        uncertainties>=3.2.3 `
+   & "$env:LOCALAPPDATA\miniconda3\Scripts\conda.exe" install -n txm -y
+        exspy>=0.3.2
+        h5netcdf>=1.6.3
+        h5py>=3.14.0
+        "hyperspy[all]>=2.3.0"
+        ipykernel>=6.30.0
+        ipympl>=0.9.7
+        jupyterlab>=4.4.5
+        matplotlib>=3.10.3
+        numpy>=2.2.6
+        openpyxl>=3.1.5
+        ruff>=0.12.4
+        scipy>=1.15.3
+        sparse>=0.17.0
+        spectrochempy==0.7.1
+        uncertainties>=3.2.3
         xarray>=2025.6.1
    conda activate txm
    ```
@@ -75,4 +74,3 @@ print(pipeline.summary_table(results))
 - 新增技术：继承 `TechniqueAnalyzer` 并注册到 `TechniqueRegistry`。
 - `utils/` 下包含 `math/`、`plotting/`、`external/`，用于数值算法与可视化扩展。
 - `io.load_table`/`io.save_table` 可在 `xarray.Dataset` 与 `csv/NetCDF` 等格式间转换。
-- `CV` 分析器可自动提取氧化/还原峰与净电荷等指标。
