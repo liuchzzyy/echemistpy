@@ -74,3 +74,21 @@ print(pipeline.summary_table(results))
 - 新增技术：继承 `TechniqueAnalyzer` 并注册到 `TechniqueRegistry`。
 - `utils/` 下包含 `math/`、`plotting/`、`external/`，用于数值算法与可视化扩展。
 - `io.load_table`/`io.save_table` 可在 `xarray.Dataset` 与 `csv/NetCDF` 等格式间转换。
+
+### 仓库结构
+
+当前仓库采用标准的 Python 包布局，以便于发布、测试与文档维护：
+
+```
+echemistpy/
+├── src/echemistpy/        # 核心源码
+├── tests/                 # Pytest 测试（含占位示例）
+├── docs/                  # 文档与 Characterization 资料
+├── examples/              # 最小可运行的使用示例
+├── LICENSE                # 专有授权声明
+├── CHANGELOG.md           # 版本更新记录
+├── CONTRIBUTING.md        # 贡献指南
+└── MANIFEST.in            # 打包额外文件清单
+```
+
+`pyproject.toml`（PEP 621）声明了构建系统与依赖，`.gitignore` 覆盖了常见的 Python 工件，方便直接接入 CI/CD。
