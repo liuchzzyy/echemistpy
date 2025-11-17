@@ -8,8 +8,8 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from echemistpy.external.echem import BiologicMPTReader  # noqa: E402
-from echemistpy.external.echem.biologic_reader import t_str  # noqa: E402
+from echemistpy.utils.external.echem import BiologicMPTReader  # noqa: E402
+from echemistpy.utils.external.echem.biologic_reader import t_str  # noqa: E402
 
 ECHEM_DIR = ROOT / "examples" / "echem"
 
