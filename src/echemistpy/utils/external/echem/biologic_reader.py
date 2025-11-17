@@ -171,7 +171,8 @@ class BiologicMPTReader:
     def _process_column_line(self, line: str) -> None:
         self.state.header_lines.append(line)
         self.state.column_names = line.strip().split(delim)
-        self.state.column_data.update({name: [] for name in self.state.column_names})
+        # Pre-initialize all column lists to avoid repeated setdefault calls
+        self.state.column_data = {name: [] for name in self.state.column_names}
         self.state.place_in_file = "data"
 
     def _process_data_line(self, line: str) -> None:
@@ -180,17 +181,20 @@ class BiologicMPTReader:
             self.state.column_names, data_strings_from_line, fillvalue="0",
         ):
             parsed_value = self._parse_float(value_string, column=name)
-            self.state.column_data.setdefault(name, []).append(parsed_value)
+            # Directly append without setdefault since dict is pre-initialized
+            self.state.column_data[name].append(parsed_value)
 
     @staticmethod
     def _parse_float(value_string: str, *, column: str | None = None) -> float:
         try:
             return float(value_string)
         except ValueError:
+            # Handle European decimal format (comma instead of period)
             if "," in value_string:
-                return BiologicMPTReader._parse_float(
-                    value_string.replace(",", "."), column=column,
-                )
+                try:
+                    return float(value_string.replace(",", "."))
+                except ValueError:
+                    pass
             warnings.warn(
                 f"Can't parse value string '{value_string}' in column '{column}'. Using 0",
             )

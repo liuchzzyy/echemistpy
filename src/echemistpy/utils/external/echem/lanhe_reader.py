@@ -163,7 +163,8 @@ class LanheReader:
             yield block_index, base + block_index * BLOCK_SIZE
 
     def _decode_samples(self) -> Iterator[SampleRecord]:
-        channel_elapsed: dict[tuple[int, int], int] = defaultdict(int)
+        # Use nested dict to avoid tuple key creation overhead
+        channel_elapsed: dict[int, dict[int, int]] = defaultdict(lambda: defaultdict(int))
 
         for block_index, offset in self._block_offsets():
             tag, channel = struct.unpack_from("<II", self._data, offset)
@@ -177,8 +178,8 @@ class LanheReader:
                 dt, v1, v2, v3, v4 = SAMPLE_STRUCT.unpack_from(self._data, base)
                 if dt == 0 and v1 == 0 and v2 == 0 and v3 == 0 and v4 == 0:
                     continue
-                channel_elapsed[tag, channel] += dt
-                elapsed_s = channel_elapsed[tag, channel] / 1000.0
+                channel_elapsed[tag][channel] += dt
+                elapsed_s = channel_elapsed[tag][channel] / 1000.0
                 yield SampleRecord(
                     block_index=block_index,
                     tag=tag,
