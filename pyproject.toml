@@ -1,9 +1,25 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
 [project]
-name = "Working_Project"
+name = "echemistpy"
 version = "0.1.0"
-description = "Cheng Liu, PhD"
+description = "A Python package for electrochemistry and materials characterization analysis"
+authors = [{name = "Cheng Liu"}]
 readme = "README.md"
-requires-python = ">=3.10,<3.11"
+requires-python = ">=3.10"
+license = {file = "LICENSE"}
+keywords = ["electrochemistry", "materials-characterization", "xrd", "xps", "xas", "tem", "sem"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Topic :: Scientific/Engineering :: Chemistry",
+    "Topic :: Scientific/Engineering :: Physics",
+]
 dependencies = [
     "exspy>=0.3.2",
     "h5netcdf>=1.6.3",
@@ -24,6 +40,10 @@ dependencies = [
     "xarray>=2025.6.1",
     "uncertainties>=3.2.3",
 ]
+
+[tool.setuptools]
+packages = ["echemistpy", "echemistpy.core", "echemistpy.io", "echemistpy.techniques", "echemistpy.utils", "echemistpy.visualization"]
+
 [tool.ruff]
 line-length = 200
 preview = true

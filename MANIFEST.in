@@ -1,0 +1,9 @@
+include README.md
+include README_PACKAGE.md
+include LICENSE
+include pyproject.toml
+include environment.yml
+recursive-include echemistpy *.py
+recursive-exclude * __pycache__
+recursive-exclude * *.py[co]
+recursive-exclude * .DS_Store

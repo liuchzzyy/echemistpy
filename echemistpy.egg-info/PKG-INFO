@@ -1,0 +1,122 @@
+Metadata-Version: 2.4
+Name: echemistpy
+Version: 0.1.0
+Summary: A Python package for electrochemistry and materials characterization analysis
+Author: Cheng Liu
+License: MIT License
+        
+        Copyright (c) 2024 Cheng Liu
+        
+        Permission is hereby granted, free of charge, to any person obtaining a copy
+        of this software and associated documentation files (the "Software"), to deal
+        in the Software without restriction, including without limitation the rights
+        to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+        copies of the Software, and to permit persons to whom the Software is
+        furnished to do so, subject to the following conditions:
+        
+        The above copyright notice and this permission notice shall be included in all
+        copies or substantial portions of the Software.
+        
+        THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+        IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+        FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+        AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+        LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+        OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+        SOFTWARE.
+        
+Keywords: electrochemistry,materials-characterization,xrd,xps,xas,tem,sem
+Classifier: Development Status :: 3 - Alpha
+Classifier: Intended Audience :: Science/Research
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Programming Language :: Python :: 3
+Classifier: Programming Language :: Python :: 3.10
+Classifier: Topic :: Scientific/Engineering :: Chemistry
+Classifier: Topic :: Scientific/Engineering :: Physics
+Requires-Python: >=3.10
+Description-Content-Type: text/markdown
+License-File: LICENSE
+Requires-Dist: exspy>=0.3.2
+Requires-Dist: h5netcdf>=1.6.3
+Requires-Dist: h5py>=3.14.0
+Requires-Dist: hyperspy[all]>=2.3.0
+Requires-Dist: ipykernel>=6.30.0
+Requires-Dist: ipympl>=0.9.7
+Requires-Dist: jupyterlab>=4.4.5
+Requires-Dist: matplotlib>=3.10.3
+Requires-Dist: numpy>=2.2.6
+Requires-Dist: openpyxl>=3.1.5
+Requires-Dist: pandas>=2.3.1
+Requires-Dist: ruff>=0.12.4
+Requires-Dist: scipy>=1.15.3
+Requires-Dist: seaborn>=0.13.2
+Requires-Dist: sparse>=0.17.0
+Requires-Dist: spectrochempy==0.7.1
+Requires-Dist: xarray>=2025.6.1
+Requires-Dist: uncertainties>=3.2.3
+Dynamic: license-file
+
+## 环境配置说明
+
+最后更新：2025-10-11
+
+以下步骤基于 Windows PowerShell。
+
+### 1. 安装 Miniconda
+
+```powershell
+winget install -e --id Anaconda.Miniconda3
+```
+
+### 2. 接受 Anaconda 默认频道的 ToS
+
+```powershell
+& "C:\Users\chengliu\AppData\Local\miniconda3\Scripts\conda.exe" tos accept --override-channels --channel https://repo.anaconda.com/pkgs/main
+& "C:\Users\chengliu\AppData\Local\miniconda3\Scripts\conda.exe" tos accept --override-channels --channel https://repo.anaconda.com/pkgs/r
+& "C:\Users\chengliu\AppData\Local\miniconda3\Scripts\conda.exe" tos accept --override-channels --channel https://repo.anaconda.com/pkgs/msys2
+```
+
+### 3. 创建 `txm` 环境
+
+```powershell
+& "C:\Users\chengliu\AppData\Local\miniconda3\Scripts\conda.exe" create -y -n txm python=3.10
+```
+
+### 4. 添加额外频道
+
+```powershell
+& "C:\Users\chengliu\AppData\Local\miniconda3\Scripts\conda.exe" config --add channels spectrocat
+& "C:\Users\chengliu\AppData\Local\miniconda3\Scripts\conda.exe" config --add channels conda-forge
+```
+
+### 5. 安装项目依赖
+
+```powershell
+& "C:\Users\chengliu\AppData\Local\miniconda3\Scripts\conda.exe" install -n txm -y `
+	exspy>=0.3.2 `
+	h5netcdf>=1.6.3 `
+	h5py>=3.14.0 `
+	"hyperspy[all]>=2.3.0" `
+	ipykernel>=6.30.0 `
+	ipympl>=0.9.7 `
+	jupyterlab>=4.4.5 `
+	matplotlib>=3.10.3 `
+	numpy>=2.2.6 `
+	openpyxl>=3.1.5 `
+	pandas>=2.3.1 `
+	ruff>=0.12.4 `
+	scipy>=1.15.3 `
+	seaborn>=0.13.2 `
+	sparse>=0.17.0 `
+	spectrochempy==0.7.1 `
+	uncertainties>=3.2.3 `
+	xarray>=2025.6.1
+```
+
+### 6. 启用环境
+
+```powershell
+conda activate txm
+```
+
+环境路径：`C:\Users\chengliu\AppData\Local\miniconda3\envs\txm`。
