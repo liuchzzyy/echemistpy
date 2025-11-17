@@ -1,4 +1,4 @@
-## 快速开始
+### 快速开始
 
 以下步骤可在 Windows PowerShell 中完成，约几分钟即可准备好开发环境。
 
@@ -40,7 +40,7 @@
 
 环境默认位于 `C:\Users\<you>\AppData\Local\miniconda3\envs\txm`。
 
-## echemistpy 包概览
+### echemistpy 包概览
 
 `echemistpy`（位于 `src/`）提供统一的数据模型和分析管线，支持 XRD、XPS、TGA、CV 等技术。典型工作流程：
 
@@ -74,5 +74,5 @@ print(pipeline.summary_table(results))
 
 - 新增技术：继承 `TechniqueAnalyzer` 并注册到 `TechniqueRegistry`。
 - `utils/` 下包含 `math/`、`plotting/`、`external/`，用于数值算法与可视化扩展。
-- `io.load_table`/`io.save_table` 可在 `xarray.Dataset` 与 CSV/TSV/JSON/NetCDF 等格式间转换。
+- `io.load_table`/`io.save_table` 可在 `xarray.Dataset` 与 `csv/NetCDF` 等格式间转换。
 - CV 分析器可自动提取氧化/还原峰与净电荷等指标。
