@@ -9,8 +9,8 @@ from .xrd import XRDPowderAnalyzer
 __all__ = [
     "CyclicVoltammetryAnalyzer",
     "TGAAnalyzer",
+    "TechniqueRegistry",
     "XPSAnalyzer",
     "XRDPowderAnalyzer",
-    "TechniqueRegistry",
     "create_default_registry",
 ]

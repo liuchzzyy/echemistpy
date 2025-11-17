@@ -102,21 +102,42 @@ def register_loader(extension: str, loader: Loader) -> None:
 
 
 def _load_excel(path: Path, **kwargs: Any) -> xr.Dataset:
-    """Load Excel files using pandas backend."""
+    """Load Excel files using openpyxl directly (without pandas)."""
     try:
-        import pandas as pd  # noqa: E402
+        from openpyxl import load_workbook
     except ImportError as exc:
-        raise ImportError("pandas is required to read Excel files") from exc
+        raise ImportError("openpyxl is required to read Excel files") from exc
 
-    # Read Excel file
-    df = pd.read_excel(path, **kwargs)
+    # Load workbook and get active sheet
+    workbook = load_workbook(path, read_only=True, data_only=True)
+    sheet = kwargs.get('sheet_name')
+    if sheet is None:
+        sheet = workbook.active
+    elif isinstance(sheet, str):
+        sheet = workbook[sheet]
+    elif isinstance(sheet, int):
+        sheet = workbook.worksheets[sheet]
+
+    # Read all data from sheet
+    rows = list(sheet.iter_rows(values_only=True))
+    if not rows:
+        return xr.Dataset()
+
+    # First row is header
+    header = [str(col) if col is not None else f"col_{i}" for i, col in enumerate(rows[0])]
+    data_rows = rows[1:]
+
+    if not data_rows:
+        return xr.Dataset()
 
     # Convert to xarray Dataset
     data_vars = {}
-    for col in df.columns:
-        data_vars[str(col)] = ("row", df[col].values)
+    for i, col_name in enumerate(header):
+        col_values = [row[i] if i < len(row) else None for row in data_rows]
+        data_vars[col_name] = ("row", np.array(col_values, dtype=object))
 
-    return xr.Dataset(data_vars=data_vars, coords={"row": np.arange(len(df))})
+    workbook.close()
+    return xr.Dataset(data_vars=data_vars, coords={"row": np.arange(len(data_rows))})
 
 
 def _load_hdf5(path: Path, **kwargs: Any) -> xr.Dataset:
@@ -165,11 +186,16 @@ def load_data_file(path: str | Path, **kwargs: Any) -> xr.Dataset:
         ValueError: If no suitable loader can handle the file
 
     Examples:
-        >>> # Load various file types automatically
-        >>> dataset1 = load_data_file("data.csv")  # CSV file
-        >>> dataset2 = load_data_file("data.xlsx") # Excel file
-        >>> dataset3 = load_data_file("data.h5")   # HDF5 file
-        >>> dataset4 = load_data_file("data.txt")  # Auto-detect delimiter
+        >>> import json, tempfile
+        >>> from pathlib import Path
+        
+        Create a temporary CSV file for testing
+        >>> with tempfile.TemporaryDirectory() as tmp:
+        ...     csv_path = Path(tmp) / "data.csv"
+        ...     _ = csv_path.write_text("x,y\\n1,2\\n3,4")
+        ...     dataset = load_data_file(csv_path)
+        ...     int(dataset["x"].values[0])
+        1
     """
     path = Path(path)
 
@@ -256,8 +282,8 @@ def list_supported_formats() -> Dict[str, str]:
         "tsv": "Tab-separated values",
         "json": "JSON table format",
         "nc/nc4/netcdf": "NetCDF format",
-        "xlsx/xls": "Excel spreadsheet (requires pandas)",
-        "h5/hdf5/hdf": "HDF5 format",
+        "xlsx/xls": "Excel spreadsheet (requires openpyxl)",
+        "h5/hdf5/hdf": "HDF5 format (requires h5netcdf or netcdf4)",
         "txt/dat/asc": "Text files with auto-detected delimiters",
     }
 

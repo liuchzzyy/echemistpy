@@ -87,6 +87,8 @@ class AnalysisResult:
             tables=merged_tables,
             figures=merged_figures,
         )
+
+
 @dataclass(slots=True)
 class NXField:
     """Representation of a NeXus dataset.

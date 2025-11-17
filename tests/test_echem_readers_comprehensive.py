@@ -53,7 +53,7 @@ class TestBiologicReaderGPCL:
         data_vars = set(measurement.data.data_vars.keys())
         for col in expected_columns:
             assert col in data_vars, f"Missing expected column: {col}"
-        
+
         # Verify at least one current-related column exists
         current_cols = [c for c in data_vars if "I" in c or "current" in c.lower()]
         assert len(current_cols) > 0, "Should have at least one current-related column"
@@ -78,7 +78,7 @@ class TestBiologicReaderGPCL:
         assert metadata.technique == "EC"
         assert metadata.instrument == "BioLogic EC-Lab"
         assert metadata.sample_name == "Biologic_GPCL.mpr"
-        
+
         # Check extras
         extras = metadata.extras
         assert "mpr_version" in extras
@@ -174,7 +174,7 @@ class TestLanheReaderGPCL:
         """Verify metadata is correctly extracted."""
         metadata = reader.metadata
         assert isinstance(metadata, dict)
-        
+
         # Check key metadata fields
         assert "test_name" in metadata
         assert metadata["test_name"]  # Should not be empty
@@ -185,7 +185,7 @@ class TestLanheReaderGPCL:
         """Verify block types are correctly counted."""
         counts = reader.block_counts
         assert len(counts) > 0
-        
+
         # Should have data points (tag 0x0603)
         data_blocks = [(tag, ch) for tag, ch in counts if tag == 0x0603]
         assert len(data_blocks) > 0, "Should have data point blocks"
@@ -194,7 +194,7 @@ class TestLanheReaderGPCL:
         """Verify samples are correctly decoded."""
         samples = reader.samples
         assert len(samples) > 0
-        
+
         # Verify sample structure
         first_sample = samples[0]
         assert hasattr(first_sample, "elapsed_s")
@@ -208,7 +208,7 @@ class TestLanheReaderGPCL:
             times.append(sample.elapsed_s)
             if len(times) >= 100:  # Sample first 100
                 break
-        
+
         assert len(times) > 0
         differences = np.diff(times)
         assert np.all(differences >= 0), "Time should progress monotonically"
@@ -220,10 +220,10 @@ class TestLanheReaderGPCL:
             values_list.append(sample.values)
             if len(values_list) >= 1000:  # Sample first 1000
                 break
-        
+
         values_array = np.array(values_list)
         assert values_array.shape[1] == 4
-        
+
         # First value is typically voltage
         voltages = values_array[:, 0]
         assert np.all(np.isfinite(voltages))
@@ -241,7 +241,7 @@ class TestLanheReaderGPCL:
         # Get all channels first
         all_channels = {s.channel_id for s in reader.samples}
         assert len(all_channels) > 0
-        
+
         # Filter by one channel
         channel = list(all_channels)[0]
         filtered = list(reader.iter_samples(channel_filter=channel))
@@ -251,10 +251,10 @@ class TestLanheReaderGPCL:
         """Verify CSV export functionality."""
         csv_file = tmp_path / "test_export.csv"
         reader.export_csv(csv_file, tag_filter=0x0603)
-        
+
         assert csv_file.exists()
         assert csv_file.stat().st_size > 0
-        
+
         # Verify CSV can be read
         with csv_file.open() as f:
             header = f.readline()
@@ -268,15 +268,15 @@ class TestReaderCompatibility:
     def test_biologic_reader_reuse(self):
         """Verify reader can be reused for multiple files."""
         reader = BiologicMPTReader()
-        
+
         # Read first file
         m1 = reader.read(ECHEM_DIR / "Biologic_GPCL.mpr")
         assert m1.data.sizes["time_index"] > 0
-        
+
         # Read second file
         m2 = reader.read(ECHEM_DIR / "Biologic_EIS.mpr")
         assert m2.data.sizes["time_index"] > 0
-        
+
         # Verify they're different
         assert m1.data.sizes["time_index"] != m2.data.sizes["time_index"]
 
@@ -285,13 +285,13 @@ class TestReaderCompatibility:
         reader = BiologicMPTReader()
         custom_name = "Test Sample"
         custom_extras = {"experiment_id": "EXP-001"}
-        
+
         measurement = reader.read(
             ECHEM_DIR / "Biologic_GPCL.mpr",
             sample_name=custom_name,
             metadata_extras=custom_extras,
         )
-        
+
         assert measurement.metadata.sample_name == custom_name
         assert "experiment_id" in measurement.metadata.extras
         assert measurement.metadata.extras["experiment_id"] == "EXP-001"
@@ -300,7 +300,7 @@ class TestReaderCompatibility:
         """Verify multiple reader instances work independently."""
         reader1 = LanheReader(ECHEM_DIR / "LANHE_GPCL.ccs")
         reader2 = LanheReader(ECHEM_DIR / "LANHE_GPCL.ccs")
-        
+
         assert len(reader1.samples) == len(reader2.samples)
         assert reader1.metadata == reader2.metadata
 
