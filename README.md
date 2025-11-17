@@ -45,7 +45,6 @@ winget install -e --id Anaconda.Miniconda3
 	matplotlib>=3.10.3 `
 	numpy>=2.2.6 `
 	openpyxl>=3.1.5 `
-	pandas>=2.3.1 `
 	ruff>=0.12.4 `
 	scipy>=1.15.3 `
 	seaborn>=0.13.2 `
