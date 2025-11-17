@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.10,<3.11"
 dependencies = [
     "exspy>=0.3.2",
+    "galvani>=0.5.0",
     "h5netcdf>=1.6.3",
     "h5py>=3.14.0",
     "hyperspy[all]>=2.3.0",
