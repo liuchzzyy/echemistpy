@@ -1,6 +1,8 @@
 from pathlib import Path
 import sys
 
+import importlib.util
+
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -12,6 +14,10 @@ from echemistpy.external.echem.biologic_reader import t_str  # noqa: E402
 ECHEM_DIR = ROOT / "examples" / "echem"
 
 
+GALVANI_AVAILABLE = importlib.util.find_spec("galvani") is not None
+
+
+@pytest.mark.skipif(not GALVANI_AVAILABLE, reason="galvani is required to parse .mpr files")
 @pytest.mark.parametrize(
     ("filename", "expected_columns"),
     [

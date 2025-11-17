@@ -59,7 +59,28 @@ _LOADER_MAP: Dict[str, Loader] = {
 
 
 def load_table(path: str | Path, *, fmt: Optional[str] = None, storage_options: Optional[Mapping[str, Any]] = None, **kwargs: Any) -> xr.Dataset:
-    """Load a tabular file into an :class:`xarray.Dataset`."""
+    """Load a tabular file into an :class:`xarray.Dataset`.
+
+    Examples
+    --------
+    The helper understands multiple formats; JSON tables make it easy to craft
+    doctest-sized fixtures.
+
+    >>> import json, tempfile
+    >>> from pathlib import Path
+    >>> payload = [
+    ...     {"voltage": 3.1, "current": 0.5},
+    ...     {"voltage": 3.4, "current": 0.4},
+    ... ]
+    >>> with tempfile.TemporaryDirectory() as tmp:
+    ...     table_path = Path(tmp) / "trace.json"
+    ...     _ = table_path.write_text(json.dumps(payload))
+    ...     dataset = load_table(table_path)
+    >>> dataset["voltage"].values.tolist()
+    [3.1, 3.4]
+    >>> dataset.row.size
+    2
+    """
 
     del storage_options  # not used yet but kept for API stability
 
