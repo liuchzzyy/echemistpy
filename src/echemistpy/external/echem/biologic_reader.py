@@ -47,11 +47,14 @@ class _ReaderState:
 
 
 class BiologicMPTReader:
-    """Parse BioLogic ``.mpt`` files into :class:`~echemistpy.io.structures.Measurement`.
+    """Parse BioLogic ``.mpt`` and ``.mpr`` files into :class:`Measurement`.
 
     The implementation mirrors ixdat's reader but stores the parsed values in
     :mod:`xarray` containers so that the rest of echemistpy can work with the
-    output directly.
+    output directly. For binary ``.mpr`` files the class defers to the
+    ``galvani`` project and includes a light-weight compatibility layer so that
+    new column identifiers are automatically exposed instead of failing the
+    parse.
     """
 
     def __init__(self):
@@ -83,19 +86,27 @@ class BiologicMPTReader:
         self.path_to_file = Path(path_to_file)
         self.measurement_name = self.path_to_file.name
 
-        if self.path_to_file.suffix.lower() != ".mpt":
+        suffix = self.path_to_file.suffix.lower()
+        sample = sample_name or self.measurement_name
+
+        if suffix == ".mpt":
+            self._series_list_from_mpt()
+            measurement = self._build_measurement(
+                sample_name=sample,
+                instrument=instrument,
+                metadata_extras=metadata_extras,
+            )
+        elif suffix == ".mpr":
+            measurement = self._build_measurement_from_mpr(
+                sample_name=sample,
+                instrument=instrument,
+                metadata_extras=metadata_extras,
+            )
+        else:
             raise BiologicReadError(
-                "Only text-based .mpt exports are supported by this lightweight "
-                "reader."
+                "Only BioLogic .mpt or .mpr exports are supported by this reader."
             )
 
-        self._series_list_from_mpt()
-
-        measurement = self._build_measurement(
-            sample_name=sample_name or self.measurement_name,
-            instrument=instrument,
-            metadata_extras=metadata_extras,
-        )
         self.measurement = measurement
         return measurement
 
@@ -227,19 +238,165 @@ class BiologicMPTReader:
             "tstamp": self.state.tstamp,
             "header": "".join(self.state.header_lines),
         }
+
+        return self._finalize_measurement(
+            dataset=dataset,
+            time_values=time_values,
+            sample_name=sample_name,
+            instrument=instrument,
+            metadata_extras=metadata_extras,
+            extras=extras,
+        )
+
+    def _build_measurement_from_mpr(
+        self,
+        *,
+        sample_name: str,
+        instrument: str,
+        metadata_extras: Optional[Mapping[str, object]],
+    ) -> Measurement:
+        dataset, extras, time_values = self._dataset_from_mpr()
+        return self._finalize_measurement(
+            dataset=dataset,
+            time_values=time_values,
+            sample_name=sample_name,
+            instrument=instrument,
+            metadata_extras=metadata_extras,
+            extras=extras,
+        )
+
+    def _finalize_measurement(
+        self,
+        *,
+        dataset: xr.Dataset,
+        time_values: np.ndarray,
+        sample_name: str,
+        instrument: str,
+        metadata_extras: Optional[Mapping[str, object]],
+        extras: Mapping[str, object],
+    ) -> Measurement:
+        merged_extras = dict(extras)
         if metadata_extras:
-            extras.update(metadata_extras)
+            merged_extras.update(metadata_extras)
 
         metadata = MeasurementMetadata(
             technique="EC",
             sample_name=sample_name,
             instrument=instrument,
-            extras=extras,
+            extras=merged_extras,
             operator=None,
         )
 
         axis = Axis(name=t_str, unit="s", values=time_values)
         return Measurement(data=dataset, metadata=metadata, axes=[axis])
+
+    def _dataset_from_mpr(self) -> tuple[xr.Dataset, Dict[str, object], np.ndarray]:
+        mpr_file = self._read_mpr_file()
+        data = mpr_file.data
+        column_names = data.dtype.names or ()
+        if t_str not in column_names:
+            raise BiologicReadError(
+                f"Missing mandatory time column '{t_str}' in {self.path_to_file}"
+            )
+
+        dim_name = "time_index"
+        coords = {dim_name: np.arange(data.shape[0], dtype=int)}
+        data_vars = {}
+        for column_name in column_names:
+            array = np.asarray(data[column_name], dtype=float)
+            data_vars[column_name] = xr.DataArray(
+                array,
+                dims=(dim_name,),
+                attrs={"unit": get_column_unit_name(column_name)},
+            )
+
+        dataset = xr.Dataset(data_vars, coords=coords)
+        time_values = np.asarray(data[t_str], dtype=float)
+        dataset = dataset.assign_coords({t_str: (dim_name, time_values)})
+
+        extras: Dict[str, object] = {
+            "ec_technique": self.state.ec_technique,
+            "timestamp_string": None,
+            "tstamp": getattr(mpr_file, "timestamp", None),
+            "header": None,
+            "mpr_version": getattr(mpr_file, "version", None),
+            "mpr_columns": tuple(int(value) for value in getattr(mpr_file, "cols", [])),
+        }
+
+        loop_index = getattr(mpr_file, "loop_index", None)
+        if loop_index is not None:
+            extras["mpr_loop_index"] = list(loop_index)
+
+        start_date = getattr(mpr_file, "startdate", None)
+        if start_date is not None:
+            extras["mpr_start_date"] = str(start_date)
+
+        end_date = getattr(mpr_file, "enddate", None)
+        if end_date is not None:
+            extras["mpr_end_date"] = str(end_date)
+
+        timestamp = extras["tstamp"]
+        if timestamp is not None:
+            extras["tstamp"] = float(timestamp.timestamp())
+
+        return dataset, extras, time_values
+
+    def _read_mpr_file(self):
+        try:
+            from galvani import BioLogic
+        except ImportError as exc:  # pragma: no cover - optional dependency
+            raise BiologicReadError(
+                "Reading .mpr files requires the optional 'galvani' package. "
+                "Install it to enable binary BioLogic parsing."
+            ) from exc
+
+        if self.path_to_file is None:
+            raise BiologicReadError("No file path provided for BioLogic reader.")
+
+        patched_ids: set[int] = set()
+        while True:
+            try:
+                with open(self.path_to_file, "rb") as handle:
+                    return BioLogic.MPRfile(handle)
+            except NotImplementedError as exc:
+                column_id = self._extract_column_id_from_error(exc)
+                if column_id is None:
+                    raise BiologicReadError(
+                        f"galvani could not parse {self.path_to_file}: {exc}"
+                    ) from exc
+                if column_id in patched_ids:
+                    raise BiologicReadError(
+                        f"Repeated failure while registering column ID {column_id} "
+                        f"for {self.path_to_file}"
+                    ) from exc
+                self._register_unknown_column(column_id, BioLogic)
+                patched_ids.add(column_id)
+            except FileNotFoundError as exc:
+                raise BiologicReadError(
+                    f"Cannot open BioLogic file {self.path_to_file}: {exc}"
+                ) from exc
+            except Exception as exc:  # pragma: no cover - defensive guard
+                raise BiologicReadError(
+                    f"Unable to parse BioLogic file {self.path_to_file}: {exc}"
+                ) from exc
+
+    @staticmethod
+    def _extract_column_id_from_error(error: Exception) -> Optional[int]:
+        match = re.search(r"Column ID (\d+)", str(error))
+        if match:
+            return int(match.group(1))
+        return None
+
+    @staticmethod
+    def _register_unknown_column(column_id: int, module) -> None:
+        name = f"unknown_{column_id}"
+        if column_id not in module.VMPdata_colID_dtype_map:
+            warnings.warn(
+                f"Encountered unknown BioLogic column ID {column_id}. Treating it "
+                "as a floating-point trace.",
+                stacklevel=2,
+            )
+            module.VMPdata_colID_dtype_map[column_id] = (name, "<f4")
 
     # ------------------------------------------------------------------
     # Convenience helpers
