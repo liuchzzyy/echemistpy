@@ -194,6 +194,23 @@ class LanheReader:
     def iter_samples(
         self, tag_filter: Optional[int] = None, channel_filter: Optional[int] = None
     ) -> Iterator[SampleRecord]:
+        """Yield decoded :class:`SampleRecord` objects that match the filters.
+
+        Parameters
+        ----------
+        tag_filter:
+            If provided, only records whose ``tag`` matches this value are
+            returned.
+        channel_filter:
+            If provided, restricts the stream to the specified ``channel_id``.
+
+        Notes
+        -----
+        The method operates on the cached ``samples`` list built during
+        initialization, so iterating multiple times does not require re-parsing
+        the binary payload.  This makes it cheap to pull different tag/channel
+        subsets for downstream analysis or previews.
+        """
         for record in self.samples:
             if tag_filter is not None and record.tag != tag_filter:
                 continue
@@ -248,6 +265,20 @@ class LanheReader:
 # ----------------------------------------------------------------------
 
 def format_metadata(metadata: Dict[str, str | List[Dict[str, str]]]) -> str:
+    """Return a human readable version of the parsed LANHE metadata.
+
+    Examples
+    --------
+    >>> print(format_metadata({
+    ...     "group_name": "Cathode study",
+    ...     "test_name": "Cycle-01",
+    ...     "operator_log": [{"user": "Alice", "timestamp": "2024-05-01"}]
+    ... }))
+      Group/Project: Cathode study
+      Test name: Cycle-01
+      Operator log:
+        - Alice @ 2024-05-01
+    """
     ordered_keys = [
         ("group_name", "Group/Project"),
         ("test_name", "Test name"),
@@ -284,6 +315,17 @@ def format_metadata(metadata: Dict[str, str | List[Dict[str, str]]]) -> str:
 
 
 def format_block_summary(counts: Counter[tuple[int, int]]) -> str:
+    """Describe how often each ``(tag, channel)`` pair appears in the file.
+
+    Examples
+    --------
+    >>> from collections import Counter
+    >>> counts = Counter({(0x0603, 1): 2, (0x0002, 1): 1})
+    >>> print(format_block_summary(counts))
+    Tag/Channel usage:
+      tag 0x0002 (section_terminator), channel 0x0001: 1 blocks
+      tag 0x0603 (data_points), channel 0x0001: 2 blocks
+    """
     lines = ["Tag/Channel usage:"]
     for (tag, channel), count in sorted(counts.items()):
         name = TAG_NAMES.get(tag, f"unknown_{tag:#06x}")
@@ -294,6 +336,7 @@ def format_block_summary(counts: Counter[tuple[int, int]]) -> str:
 
 
 def preview_samples(reader: LanheReader, limit: int = 5) -> str:
+    """Format the first few decoded samples (default five) for display."""
     rows: List[str] = []
     for idx, record in enumerate(reader.iter_samples(tag_filter=0x0603)):
         if idx >= limit:

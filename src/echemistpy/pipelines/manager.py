@@ -25,6 +25,23 @@ class AnalysisPipeline:
         return results
 
     def summary_table(self, results: Sequence[AnalysisResult]) -> xr.Dataset:
+        """Condense a list of :class:`AnalysisResult` objects into a dataset.
+
+        Examples
+        --------
+        >>> from echemistpy.analysis import TechniqueRegistry
+        >>> from echemistpy.io import AnalysisResult
+        >>> registry = TechniqueRegistry()
+        >>> pipeline = AnalysisPipeline(registry)
+        >>> table = pipeline.summary_table([
+        ...     AnalysisResult("xrd", "Sample-1", {"peak": 42.1}),
+        ...     AnalysisResult("xps", "Sample-2", {"peak": 11.5}),
+        ... ])
+        >>> sorted(table.data_vars)
+        ['peak', 'technique']
+        >>> table.technique.values.tolist()
+        ['xrd', 'xps']
+        """
         if not results:
             return xr.Dataset()
 
