@@ -20,7 +20,6 @@
    & "$env:LOCALAPPDATA\miniconda3\Scripts\conda.exe" install -n txm -y
         exspy>=0.3.2
         h5netcdf>=1.6.3
-        h5py>=3.14.0
         "hyperspy[all]>=2.3.0"
         ipykernel>=6.30.0
         ipympl>=0.9.7

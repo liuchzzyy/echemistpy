@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-import datetime as _datetime
-import os
 from dataclasses import dataclass, field
-from typing import Any, Dict, Iterable, List, MutableMapping, Optional, Sequence
+from typing import Any, Dict, Iterable, Iterator, List, MutableMapping, Optional, Sequence, Tuple
 
 import xarray as xr
 
@@ -89,16 +87,6 @@ class AnalysisResult:
             tables=merged_tables,
             figures=merged_figures,
         )
-
-
-def _require_h5py():
-    try:
-        import h5py  # type: ignore
-    except ModuleNotFoundError as exc:  # pragma: no cover - defensive import helper
-        raise RuntimeError("h5py is required to serialize NeXus structures") from exc
-    return h5py
-
-
 @dataclass(slots=True)
 class NXField:
     """Representation of a NeXus dataset.
@@ -116,20 +104,19 @@ class NXField:
     doc: Optional[str] = None
     extra_attrs: MutableMapping[str, Any] = field(default_factory=dict)
 
-    def to_h5py(self, parent: Any) -> Any:
-        """Materialize the field inside an ``h5py`` group."""
+    def to_dataarray(self) -> xr.DataArray:
+        """Represent the field as a scalar :class:`xarray.DataArray`."""
 
-        h5py = _require_h5py()
-        dataset = parent.create_dataset(name=self.name, data=self.value, maxshape=None)
-        dataset.attrs["type"] = self.dtype
-        dataset.attrs["EX_required"] = "true" if self.required else "false"
+        data = xr.DataArray(self.value)
+        data.attrs["type"] = self.dtype
+        data.attrs["EX_required"] = "true" if self.required else "false"
         if self.units:
-            dataset.attrs["units"] = self.units
+            data.attrs["units"] = self.units
         if self.doc:
-            dataset.attrs["EX_doc"] = self.doc
+            data.attrs["EX_doc"] = self.doc
         for key, value in self.extra_attrs.items():
-            dataset.attrs[key] = value
-        return dataset
+            data.attrs[key] = value
+        return data
 
 
 @dataclass(slots=True)
@@ -140,14 +127,11 @@ class NXLink:
     target: str
     extra_attrs: MutableMapping[str, Any] = field(default_factory=dict)
 
-    def to_h5py(self, parent: Any) -> Any:
-        h5py = _require_h5py()
-        parent[self.name] = h5py.SoftLink(self.target)
-        link = parent[self.name]
-        link.attrs["target"] = self.target
-        for key, value in self.extra_attrs.items():
-            link.attrs[key] = value
-        return link
+    def to_tuple(self) -> Tuple[str, str, Tuple[Tuple[str, Any], ...]]:
+        """Return a tuple representation suitable for dataset attributes."""
+
+        extras = tuple(sorted(self.extra_attrs.items()))
+        return (self.name, self.target, extras)
 
 
 @dataclass(slots=True)
@@ -163,66 +147,47 @@ class NXGroup:
     groups: List["NXGroup"] = field(default_factory=list)
     links: List[NXLink] = field(default_factory=list)
 
-    def to_h5py(self, parent: Any) -> Any:
-        """Write the group and its children into an ``h5py`` file."""
+    def to_dataset(self) -> xr.Dataset:
+        """Represent the group as an :class:`xarray.Dataset`."""
 
-        group = parent.create_group(self.name)
-        group.attrs["NX_class"] = self.nx_class
-        group.attrs["EX_required"] = "true" if self.required else "false"
+        data_vars = {field.name: field.to_dataarray() for field in self.fields}
+        dataset = xr.Dataset(data_vars=data_vars)
+        dataset.attrs["NX_class"] = self.nx_class
+        dataset.attrs["EX_required"] = "true" if self.required else "false"
         if self.doc:
-            group.attrs["EX_doc"] = self.doc
+            dataset.attrs["EX_doc"] = self.doc
         for key, value in self.attributes.items():
-            group.attrs[key] = value
-        for field in self.fields:
-            field.to_h5py(group)
+            dataset.attrs[key] = value
+        if self.links:
+            dataset.attrs["NX_links"] = tuple(link.to_tuple() for link in self.links)
+        return dataset
+
+    def iter_datasets(self, parent_path: str = "") -> Iterator[Tuple[str, xr.Dataset]]:
+        """Yield ``(path, dataset)`` pairs for this group and its children."""
+
+        path = "/".join(part for part in (parent_path, self.name) if part)
+        yield path, self.to_dataset()
         for subgroup in self.groups:
-            subgroup.to_h5py(group)
-        for link in self.links:
-            link.to_h5py(group)
-        return group
+            yield from subgroup.iter_datasets(path)
 
 
 @dataclass(slots=True)
 class NXFile:
-    """Container for serializing NeXus file layouts."""
+    """Container for describing NeXus file layouts via :mod:`xarray`."""
 
     groups: List[NXGroup] = field(default_factory=list)
     attrs: MutableMapping[str, Any] = field(default_factory=dict)
 
-    def write(self, destination: Any) -> None:
-        """Serialize the NeXus layout using :mod:`h5py`.
+    def iter_datasets(self) -> Iterator[Tuple[str, xr.Dataset]]:
+        """Iterate over every ``NXGroup`` as ``(path, dataset)`` pairs."""
 
-        ``destination`` may either be a filesystem path or an ``h5py.File``
-        instance. File level metadata such as ``file_name`` and
-        ``file_time`` follow the behaviour from
-        ``ex_h5py_NXxbase.py``.
-        """
+        for group in self.groups:
+            yield from group.iter_datasets("")
 
-        h5py = _require_h5py()
+    def to_xarray_tree(self) -> Dict[str, xr.Dataset]:
+        """Materialize the full hierarchy as ``path -> Dataset`` mapping."""
 
-        manage_file = not isinstance(destination, h5py.File)
-        handle = destination
-        path_hint: Optional[str] = None
-        if manage_file:
-            path_hint = os.fspath(destination)
-            handle = h5py.File(path_hint, "w")
-        else:  # pragma: no cover - exercised in integration environments
-            path_hint = getattr(destination, "filename", None)
-
-        try:
-            for group in self.groups:
-                group.to_h5py(handle)
-            for key, value in self.attrs.items():
-                handle.attrs[key] = value
-
-            if path_hint:
-                handle.attrs.setdefault("file_name", os.path.abspath(path_hint))
-            handle.attrs.setdefault("file_time", _datetime.datetime.now().isoformat())
-            handle.attrs.setdefault("h5py_version", h5py.version.version)
-            handle.attrs.setdefault("HDF5_Version", h5py.version.hdf5_version)
-        finally:
-            if manage_file:
-                handle.close()
+        return {path: dataset for path, dataset in self.iter_datasets()}
 
 
 def create_nxxbase_template() -> NXFile:
