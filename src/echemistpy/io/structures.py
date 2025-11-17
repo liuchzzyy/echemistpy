@@ -190,15 +190,15 @@ class NXFile:
         return {path: dataset for path, dataset in self.iter_datasets()}
 
 
-def create_nxxbase_template() -> NXFile:
-    """Create the canonical ``NXxbase`` hierarchy.
+@dataclass(slots=True)
+class NXEchemBase:
+    """Utility that builds the electrochemistry-oriented NXxbase layout."""
 
-    The values follow the auto-generated NeXus example from
-    ``ex_h5py_NXxbase.py`` and provide a ready-to-serialize template for
-    instrument control data.
-    """
+    title: str = "Project Title"
+    readme: str = "Describe the experiment"
 
-    def nx_field(
+    @staticmethod
+    def _nx_field(
         name: str,
         value: Any,
         dtype: str,
@@ -218,179 +218,106 @@ def create_nxxbase_template() -> NXFile:
             extra_attrs=extra or {},
         )
 
-    source = NXGroup(
-        name="source",
-        nx_class="NXsource",
-        fields=[
-            nx_field("type", "SAMPLE-CHAR-DATA", "NX_CHAR"),
-            nx_field("name", "SAMPLE-CHAR-DATA", "NX_CHAR"),
-            nx_field("probe", "neutron", "NX_CHAR"),
-        ],
-    )
-
-    monochromator = NXGroup(
-        name="monochromator",
-        nx_class="NXmonochromator",
-        fields=[
-            nx_field(
-                "wavelength",
-                1.0,
-                "NX_FLOAT",
-                units="NX_WAVELENGTH",
-            )
-        ],
-    )
-
-    detector = NXGroup(
-        name="detector",
-        nx_class="NXdetector",
-        doc=(
-            "The name of the group is detector if there is only one detector, "
-            "if there are several, names have to be detector1, detector2, ...detectorn."
-        ),
-        fields=[
-            nx_field(
-                "data",
-                1,
-                "NX_INT",
-                doc=(
-                    "The area detector data, the first dimension is always the number of scan "
-                    "points, the second and third are the number of pixels in x and y. The "
-                    "origin is always assumed to be in the center of the detector. maxOccurs is "
-                    "limited to the number of detectors on your instrument."
+    def _raw_echem_group(self) -> NXGroup:
+        raw_echem_metadata = NXGroup(
+            name="MetaData",
+            nx_class="NXcollection",
+            fields=[
+                self._nx_field(
+                    "InstrumentInfo",
+                    "Describe potentiostat, reference, etc.",
+                    "NX_CHAR",
+                    doc="Basic instrument description",
                 ),
-                extra={"signal": "1"},
-            ),
-            nx_field("x_pixel_size", 1.0, "NX_FLOAT", units="NX_LENGTH"),
-            nx_field("y_pixel_size", 1.0, "NX_FLOAT", units="NX_LENGTH"),
-            nx_field("distance", 1.0, "NX_FLOAT", units="NX_LENGTH"),
-            nx_field(
-                "frame_start_number",
-                1,
-                "NX_INT",
-                doc=(
-                    "This is the start number of the first frame of a scan. In PX one often "
-                    "scans a couple of frames on a give sample, then does something else, then "
-                    "returns to the same sample and scans some more frames. Each time with a new "
-                    "data file. This number helps concatenating such measurements."
+                self._nx_field(
+                    "Measurement",
+                    "Detail electrolyte, scan rate, etc.",
+                    "NX_CHAR",
+                    doc="Acquisition settings",
                 ),
-            ),
-        ],
-    )
-
-    instrument = NXGroup(
-        name="instrument",
-        nx_class="NXinstrument",
-        groups=[source, monochromator, detector],
-    )
-
-    sample = NXGroup(
-        name="sample",
-        nx_class="NXsample",
-        fields=[
-            nx_field("name", "SAMPLE-CHAR-DATA", "NX_CHAR", doc="Descriptive name of sample"),
-            nx_field(
-                "orientation_matrix",
-                1.0,
-                "NX_FLOAT",
-                doc=(
-                    "The orientation matrix according to Busing and Levy conventions. This is "
-                    "not strictly necessary as the UB can always be derived from the data. But "
-                    "let us bow to common usage which includes the UB nearly always."
+                self._nx_field(
+                    "Time",
+                    "2024-01-01T00:00:00",
+                    "NX_DATE_TIME",
+                    doc="Acquisition timestamp",
                 ),
-            ),
-            nx_field(
-                "unit_cell",
-                1.0,
-                "NX_FLOAT",
-                doc=(
-                    "The unit cell, a, b, c, alpha, beta, gamma. Again, not strictly necessary, "
-                    "but normally written."
+            ],
+        )
+
+        return NXGroup(
+            name="Echem",
+            nx_class="NXcollection",
+            fields=[
+                self._nx_field("Title", "Electrochemistry", "NX_CHAR"),
+                self._nx_field(
+                    "Data",
+                    0.0,
+                    "NX_FLOAT",
+                    doc="Placeholder for raw electrochemistry data table",
                 ),
-            ),
-            nx_field("temperature", 1.0, "NX_FLOAT", doc="The sample temperature or whatever sensor represents this value best"),
-            nx_field(
-                "x_translation",
-                1.0,
-                "NX_FLOAT",
-                units="NX_LENGTH",
-                doc="Translation of the sample along the X-direction of the laboratory coordinate system",
-            ),
-            nx_field(
-                "y_translation",
-                1.0,
-                "NX_FLOAT",
-                units="NX_LENGTH",
-                doc="Translation of the sample along the Y-direction of the laboratory coordinate system",
-            ),
-            nx_field(
-                "distance",
-                1.0,
-                "NX_FLOAT",
-                units="NX_LENGTH",
-                doc="Translation of the sample along the Z-direction of the laboratory coordinate system",
-            ),
-        ],
-    )
+            ],
+            groups=[raw_echem_metadata],
+        )
 
-    control = NXGroup(
-        name="control",
-        nx_class="NXmonitor",
-        fields=[
-            nx_field(
-                "mode",
-                "monitor",
-                "NX_CHAR",
-                doc="Count to a preset value based on either clock time (timer) or received monitor counts (monitor).",
-            ),
-            nx_field("preset", 1.0, "NX_FLOAT", doc="preset value for time or monitor"),
-            nx_field(
-                "integral",
-                1.0,
-                "NX_FLOAT",
-                units="NX_ANY",
-                doc="Total integral monitor counts",
-            ),
-        ],
-    )
+    def _results_echem_group(self) -> NXGroup:
+        results_echem_metadata = NXGroup(
+            name="MetaData",
+            nx_class="NXcollection",
+            fields=[
+                self._nx_field(
+                    "Analysis",
+                    "Describe processing pipeline and parameters",
+                    "NX_CHAR",
+                    doc="Analysis provenance",
+                )
+            ],
+        )
 
-    data_group = NXGroup(
-        name="data",
-        nx_class="NXdata",
-        doc=(
-            "The name of this group id data if there is only one detector; if there are several the names "
-            "will be data1, data2, data3 and will point to the corresponding detector groups in the instrument hierarchy."
-        ),
-        attributes={"signal": "data"},
-        links=[
-            NXLink(
-                name="data",
-                target="/entry/instrument/detector/data",
-                extra_attrs={"signal": "1"},
-            )
-        ],
-    )
+        return NXGroup(
+            name="Echem",
+            nx_class="NXcollection",
+            fields=[
+                self._nx_field(
+                    "Data",
+                    0.0,
+                    "NX_FLOAT",
+                    doc="Placeholder for processed electrochemistry metrics",
+                )
+            ],
+            groups=[results_echem_metadata],
+        )
 
-    entry = NXGroup(
-        name="entry",
-        nx_class="NXentry",
-        attributes={"default": "data"},
-        fields=[
-            nx_field("title", "SAMPLE-CHAR-DATA", "NX_CHAR"),
-            nx_field(
-                "start_time",
-                "2021-03-29T15:51:46.136351",
-                "NX_DATE_TIME",
-            ),
-            nx_field(
-                "definition",
-                "NXxbase",
-                "NX_CHAR",
-                doc="Official NeXus NXDL schema to which this file conforms",
-            ),
-        ],
-        groups=[instrument, sample, control, data_group],
-    )
+    def to_nxfile(self) -> NXFile:
+        """Materialize the NXxbase layout anchored around electrochemistry."""
 
-    nx_file = NXFile(groups=[entry], attrs={"default": "entry"})
-    return nx_file
+        entry = NXGroup(
+            name="entry",
+            nx_class="NXentry",
+            attributes={"default": "Results"},
+            fields=[
+                self._nx_field("Title", self.title, "NX_CHAR"),
+                self._nx_field("Readme", self.readme, "NX_CHAR"),
+            ],
+            groups=[
+                NXGroup(
+                    name="RawData",
+                    nx_class="NXcollection",
+                    doc="Container for technique-specific raw datasets (Echem, XRD, TEM, …)",
+                    groups=[self._raw_echem_group()],
+                ),
+                NXGroup(
+                    name="Results",
+                    nx_class="NXcollection",
+                    doc="Derived analysis products per technique",
+                    groups=[self._results_echem_group()],
+                ),
+            ],
+        )
+
+        return NXFile(groups=[entry], attrs={"default": "entry"})
+
+
+def create_nxxbase_template() -> NXFile:
+    """Backward compatible helper that returns :class:`NXEchemBase`."""
+
+    return NXEchemBase().to_nxfile()
