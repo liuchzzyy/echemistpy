@@ -11,9 +11,12 @@ from typing import Iterable
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:  # pragma: no cover - simple path guard
     sys.path.insert(0, str(ROOT))
+SRC = ROOT / "src"
+if str(SRC) not in sys.path:  # pragma: no cover - simple path guard
+    sys.path.insert(0, str(SRC))
 
 MODULES: Iterable[str] = (
-    "lanhe_reader",
+    "echemistpy.utils.external.echem.lanhe_reader",
     "echemistpy.io.loaders",
     "echemistpy.pipelines.manager",
 )
