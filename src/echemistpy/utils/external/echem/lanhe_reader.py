@@ -34,9 +34,9 @@ import argparse
 import csv
 import struct
 from collections import Counter, defaultdict
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Iterable, Iterator, List, Optional, Sequence
 
 BLOCK_SIZE = 128
 HEADER_SIZE = 0x1000
@@ -87,13 +87,13 @@ class LanheReader:
         raw = raw.split(b"\x00", 1)[0]
         return raw.decode("utf-8", errors="ignore").strip()
 
-    def _parse_metadata(self) -> Dict[str, str | List[Dict[str, str]]]:
+    def _parse_metadata(self) -> dict[str, str | list[dict[str, str]]]:
         """Extract human readable metadata from the fixed header."""
 
         def field(key: str, offset: int, length: int) -> str:
             return self._read_string(offset, length)
 
-        meta: Dict[str, str | List[Dict[str, str]]] = {
+        meta: dict[str, str | list[dict[str, str]]] = {
             "group_name": field("group_name", 0x10, 0x40),
             "computer": field("computer", 0x58, 0x20),
             "project_guid": field("project_guid", 0x78, 0x40),
@@ -117,10 +117,10 @@ class LanheReader:
         meta["operator_log"] = self._parse_operator_log()
         return meta
 
-    def _parse_operator_log(self) -> List[Dict[str, str]]:
+    def _parse_operator_log(self) -> list[dict[str, str]]:
         """Best-effort decoding of the operator/timestamp entries in the header."""
 
-        log_entries: List[Dict[str, str]] = []
+        log_entries: list[dict[str, str]] = []
         entry_start = 0x504
         entry_size = 0x40
         end = 0x700
@@ -137,7 +137,7 @@ class LanheReader:
 
             remainder = remainder.lstrip(b"\x00")
             timestamp = remainder.split(b"\x00", 1)[0].decode(
-                "utf-8", errors="ignore"
+                "utf-8", errors="ignore",
             ).strip()
 
             log_entries.append({"user": user, "timestamp": timestamp})
@@ -152,7 +152,7 @@ class LanheReader:
         counts: Counter[tuple[int, int]] = Counter()
         for block_index, offset in self._block_offsets():
             tag, channel = struct.unpack_from("<II", self._data, offset)
-            counts[(tag, channel)] += 1
+            counts[tag, channel] += 1
         return counts
 
     def _block_offsets(self) -> Iterator[tuple[int, int]]:
@@ -163,7 +163,8 @@ class LanheReader:
             yield block_index, base + block_index * BLOCK_SIZE
 
     def _decode_samples(self) -> Iterator[SampleRecord]:
-        channel_elapsed: Dict[tuple[int, int], int] = defaultdict(int)
+        # Use nested dict to avoid tuple key creation overhead
+        channel_elapsed: dict[int, dict[int, int]] = defaultdict(lambda: defaultdict(int))
 
         for block_index, offset in self._block_offsets():
             tag, channel = struct.unpack_from("<II", self._data, offset)
@@ -177,8 +178,8 @@ class LanheReader:
                 dt, v1, v2, v3, v4 = SAMPLE_STRUCT.unpack_from(self._data, base)
                 if dt == 0 and v1 == 0 and v2 == 0 and v3 == 0 and v4 == 0:
                     continue
-                channel_elapsed[(tag, channel)] += dt
-                elapsed_s = channel_elapsed[(tag, channel)] / 1000.0
+                channel_elapsed[tag][channel] += dt
+                elapsed_s = channel_elapsed[tag][channel] / 1000.0
                 yield SampleRecord(
                     block_index=block_index,
                     tag=tag,
@@ -192,7 +193,7 @@ class LanheReader:
     # Public helpers
     # ------------------------------------------------------------------
     def iter_samples(
-        self, tag_filter: Optional[int] = None, channel_filter: Optional[int] = None
+        self, tag_filter: int | None = None, channel_filter: int | None = None,
     ) -> Iterator[SampleRecord]:
         """Yield decoded :class:`SampleRecord` objects that match the filters.
 
@@ -221,8 +222,8 @@ class LanheReader:
     def export_csv(
         self,
         destination: Path | str,
-        tag_filter: Optional[int] = 0x0603,
-        channel_filter: Optional[int] = None,
+        tag_filter: int | None = 0x0603,
+        channel_filter: int | None = None,
     ) -> None:
         """Dump the decoded samples to a CSV file."""
 
@@ -256,7 +257,7 @@ class LanheReader:
                         "value2": f"{v2:.9f}",
                         "value3": f"{v3:.9f}",
                         "value4": f"{v4:.9f}",
-                    }
+                    },
                 )
 
 
@@ -264,7 +265,7 @@ class LanheReader:
 # CLI
 # ----------------------------------------------------------------------
 
-def format_metadata(metadata: Dict[str, str | List[Dict[str, str]]]) -> str:
+def format_metadata(metadata: dict[str, str | list[dict[str, str]]]) -> str:
     """Return a human readable version of the parsed LANHE metadata.
 
     Examples
@@ -299,7 +300,7 @@ def format_metadata(metadata: Dict[str, str | List[Dict[str, str]]]) -> str:
         ("program_name", "Program name"),
         ("program_description", "Program description"),
     ]
-    lines: List[str] = []
+    lines: list[str] = []
     for key, label in ordered_keys:
         value = metadata.get(key)
         if isinstance(value, str) and value:
@@ -330,28 +331,28 @@ def format_block_summary(counts: Counter[tuple[int, int]]) -> str:
     for (tag, channel), count in sorted(counts.items()):
         name = TAG_NAMES.get(tag, f"unknown_{tag:#06x}")
         lines.append(
-            f"  tag {tag:#06x} ({name}), channel {channel:#06x}: {count} blocks"
+            f"  tag {tag:#06x} ({name}), channel {channel:#06x}: {count} blocks",
         )
     return "\n".join(lines)
 
 
 def preview_samples(reader: LanheReader, limit: int = 5) -> str:
     """Format the first few decoded samples (default five) for display."""
-    rows: List[str] = []
+    rows: list[str] = []
     for idx, record in enumerate(reader.iter_samples(tag_filter=0x0603)):
         if idx >= limit:
             break
         v1, v2, v3, v4 = record.values
         rows.append(
             f"  t={record.elapsed_s:8.3f}s, Δt={record.delta_ms:5d} ms, "
-            f"values=({v1:.9f}, {v2:.9f}, {v3:.9f}, {v4:.9f})"
+            f"values=({v1:.9f}, {v2:.9f}, {v3:.9f}, {v4:.9f})",
         )
     if not rows:
         rows.append("  (no samples decoded)")
     return "\n".join(rows)
 
 
-def main(argv: Optional[Sequence[str]] = None) -> None:
+def main(argv: Sequence[str] | None = None) -> None:
     parser = argparse.ArgumentParser(
         description="Parse LANHE *.ccs electrochemistry files and print their contents.",
     )

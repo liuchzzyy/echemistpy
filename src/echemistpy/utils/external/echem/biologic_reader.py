@@ -11,17 +11,16 @@ from __future__ import annotations
 
 import re
 import warnings
+from collections.abc import Mapping, MutableMapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from itertools import zip_longest
 from pathlib import Path
-from typing import Dict, List, Mapping, MutableMapping, Optional, Sequence
 
 import numpy as np
 import xarray as xr
 
 from echemistpy.io.structures import Axis, Measurement, MeasurementMetadata
-
 
 delim = "\t"
 t_str = "time/s"
@@ -37,13 +36,13 @@ class _ReaderState:
 
     n_line: int = 0
     place_in_file: str = "header"
-    header_lines: List[str] = field(default_factory=list)
-    timestamp_string: Optional[str] = None
-    tstamp: Optional[float] = None
-    N_header_lines: Optional[int] = None
-    column_names: List[str] = field(default_factory=list)
-    column_data: MutableMapping[str, List[float]] = field(default_factory=dict)
-    ec_technique: Optional[str] = None
+    header_lines: list[str] = field(default_factory=list)
+    timestamp_string: str | None = None
+    tstamp: float | None = None
+    N_header_lines: int | None = None
+    column_names: list[str] = field(default_factory=list)
+    column_data: MutableMapping[str, list[float]] = field(default_factory=dict)
+    ec_technique: str | None = None
 
 
 class BiologicMPTReader:
@@ -58,18 +57,18 @@ class BiologicMPTReader:
     """
 
     def __init__(self):
-        self.path_to_file: Optional[Path] = None
-        self.measurement_name: Optional[str] = None
+        self.path_to_file: Path | None = None
+        self.measurement_name: str | None = None
         self.state = _ReaderState()
-        self.measurement: Optional[Measurement] = None
+        self.measurement: Measurement | None = None
 
     def read(
         self,
         path_to_file: str | Path,
         *,
-        sample_name: Optional[str] = None,
+        sample_name: str | None = None,
         instrument: str = "BioLogic EC-Lab",
-        metadata_extras: Optional[Mapping[str, object]] = None,
+        metadata_extras: Mapping[str, object] | None = None,
     ) -> Measurement:
         """Read ``path_to_file`` and return a :class:`Measurement`.
 
@@ -104,7 +103,7 @@ class BiologicMPTReader:
             )
         else:
             raise BiologicReadError(
-                "Only BioLogic .mpt or .mpr exports are supported by this reader."
+                "Only BioLogic .mpt or .mpr exports are supported by this reader.",
             )
 
         self.measurement = measurement
@@ -118,13 +117,13 @@ class BiologicMPTReader:
     # ------------------------------------------------------------------
     def _series_list_from_mpt(self) -> None:
         assert self.path_to_file is not None
-        with open(self.path_to_file, "r", encoding="ISO-8859-1") as handle:
+        with open(self.path_to_file, encoding="ISO-8859-1") as handle:
             for line in handle:
                 self._process_line(line)
 
         if t_str not in self.state.column_data:
             raise BiologicReadError(
-                f"Missing mandatory time column '{t_str}' in {self.path_to_file}"
+                f"Missing mandatory time column '{t_str}' in {self.path_to_file}",
             )
 
     def _process_line(self, line: str) -> None:
@@ -172,28 +171,32 @@ class BiologicMPTReader:
     def _process_column_line(self, line: str) -> None:
         self.state.header_lines.append(line)
         self.state.column_names = line.strip().split(delim)
-        self.state.column_data.update({name: [] for name in self.state.column_names})
+        # Pre-initialize all column lists to avoid repeated setdefault calls
+        self.state.column_data = {name: [] for name in self.state.column_names}
         self.state.place_in_file = "data"
 
     def _process_data_line(self, line: str) -> None:
         data_strings_from_line = line.strip().split()
         for name, value_string in zip_longest(
-            self.state.column_names, data_strings_from_line, fillvalue="0"
+            self.state.column_names, data_strings_from_line, fillvalue="0",
         ):
             parsed_value = self._parse_float(value_string, column=name)
-            self.state.column_data.setdefault(name, []).append(parsed_value)
+            # Directly append without setdefault since dict is pre-initialized
+            self.state.column_data[name].append(parsed_value)
 
     @staticmethod
-    def _parse_float(value_string: str, *, column: Optional[str] = None) -> float:
+    def _parse_float(value_string: str, *, column: str | None = None) -> float:
         try:
             return float(value_string)
         except ValueError:
+            # Handle European decimal format (comma instead of period)
             if "," in value_string:
-                return BiologicMPTReader._parse_float(
-                    value_string.replace(",", "."), column=column
-                )
+                try:
+                    return float(value_string.replace(",", "."))
+                except ValueError:
+                    pass
             warnings.warn(
-                f"Can't parse value string '{value_string}' in column '{column}'. Using 0"
+                f"Can't parse value string '{value_string}' in column '{column}'. Using 0",
             )
             return 0.0
 
@@ -205,7 +208,7 @@ class BiologicMPTReader:
         *,
         sample_name: str,
         instrument: str,
-        metadata_extras: Optional[Mapping[str, object]] = None,
+        metadata_extras: Mapping[str, object] | None = None,
     ) -> Measurement:
         time_values = np.asarray(self.state.column_data[t_str], dtype=float)
         n_rows = len(time_values)
@@ -220,7 +223,7 @@ class BiologicMPTReader:
             if len(array) != n_rows:
                 warnings.warn(
                     f"Skipping column '{column_name}' because it has {len(array)} samples "
-                    f"while the time base has {n_rows}."
+                    f"while the time base has {n_rows}.",
                 )
                 continue
             data_vars[column_name] = xr.DataArray(
@@ -232,7 +235,7 @@ class BiologicMPTReader:
         dataset = xr.Dataset(data_vars, coords=coords)
         dataset = dataset.assign_coords({t_str: (dim_name, time_values)})
 
-        extras: Dict[str, object] = {
+        extras: dict[str, object] = {
             "ec_technique": self.state.ec_technique,
             "timestamp_string": self.state.timestamp_string,
             "tstamp": self.state.tstamp,
@@ -253,7 +256,7 @@ class BiologicMPTReader:
         *,
         sample_name: str,
         instrument: str,
-        metadata_extras: Optional[Mapping[str, object]],
+        metadata_extras: Mapping[str, object] | None,
     ) -> Measurement:
         dataset, extras, time_values = self._dataset_from_mpr()
         return self._finalize_measurement(
@@ -272,7 +275,7 @@ class BiologicMPTReader:
         time_values: np.ndarray,
         sample_name: str,
         instrument: str,
-        metadata_extras: Optional[Mapping[str, object]],
+        metadata_extras: Mapping[str, object] | None,
         extras: Mapping[str, object],
     ) -> Measurement:
         merged_extras = dict(extras)
@@ -290,13 +293,13 @@ class BiologicMPTReader:
         axis = Axis(name=t_str, unit="s", values=time_values)
         return Measurement(data=dataset, metadata=metadata, axes=[axis])
 
-    def _dataset_from_mpr(self) -> tuple[xr.Dataset, Dict[str, object], np.ndarray]:
+    def _dataset_from_mpr(self) -> tuple[xr.Dataset, dict[str, object], np.ndarray]:
         mpr_file = self._read_mpr_file()
         data = mpr_file.data
         column_names = data.dtype.names or ()
         if t_str not in column_names:
             raise BiologicReadError(
-                f"Missing mandatory time column '{t_str}' in {self.path_to_file}"
+                f"Missing mandatory time column '{t_str}' in {self.path_to_file}",
             )
 
         dim_name = "time_index"
@@ -314,7 +317,7 @@ class BiologicMPTReader:
         time_values = np.asarray(data[t_str], dtype=float)
         dataset = dataset.assign_coords({t_str: (dim_name, time_values)})
 
-        extras: Dict[str, object] = {
+        extras: dict[str, object] = {
             "ec_technique": self.state.ec_technique,
             "timestamp_string": None,
             "tstamp": getattr(mpr_file, "timestamp", None),
@@ -347,7 +350,7 @@ class BiologicMPTReader:
         except ImportError as exc:  # pragma: no cover - optional dependency
             raise BiologicReadError(
                 "Reading .mpr files requires the optional 'galvani' package. "
-                "Install it to enable binary BioLogic parsing."
+                "Install it to enable binary BioLogic parsing.",
             ) from exc
 
         if self.path_to_file is None:
@@ -362,26 +365,26 @@ class BiologicMPTReader:
                 column_id = self._extract_column_id_from_error(exc)
                 if column_id is None:
                     raise BiologicReadError(
-                        f"galvani could not parse {self.path_to_file}: {exc}"
+                        f"galvani could not parse {self.path_to_file}: {exc}",
                     ) from exc
                 if column_id in patched_ids:
                     raise BiologicReadError(
                         f"Repeated failure while registering column ID {column_id} "
-                        f"for {self.path_to_file}"
+                        f"for {self.path_to_file}",
                     ) from exc
                 self._register_unknown_column(column_id, BioLogic)
                 patched_ids.add(column_id)
             except FileNotFoundError as exc:
                 raise BiologicReadError(
-                    f"Cannot open BioLogic file {self.path_to_file}: {exc}"
+                    f"Cannot open BioLogic file {self.path_to_file}: {exc}",
                 ) from exc
             except Exception as exc:  # pragma: no cover - defensive guard
                 raise BiologicReadError(
-                    f"Unable to parse BioLogic file {self.path_to_file}: {exc}"
+                    f"Unable to parse BioLogic file {self.path_to_file}: {exc}",
                 ) from exc
 
     @staticmethod
-    def _extract_column_id_from_error(error: Exception) -> Optional[int]:
+    def _extract_column_id_from_error(error: Exception) -> int | None:
         match = re.search(r"Column ID (\d+)", str(error))
         if match:
             return int(match.group(1))
@@ -436,11 +439,11 @@ def fix_WE_potential(
     return measurement
 
 
-def get_column_unit_name(column_name: str) -> Optional[str]:
+def get_column_unit_name(column_name: str) -> str | None:
     """Return the unit name of a column, i.e. the substring after ``/``."""
 
     if "/" in column_name:
-        return column_name.split("/")[-1]
+        return column_name.rsplit("/", maxsplit=1)[-1]
     return None
 
 
