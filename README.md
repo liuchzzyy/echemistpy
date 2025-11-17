@@ -75,4 +75,4 @@ print(pipeline.summary_table(results))
 - 新增技术：继承 `TechniqueAnalyzer` 并注册到 `TechniqueRegistry`。
 - `utils/` 下包含 `math/`、`plotting/`、`external/`，用于数值算法与可视化扩展。
 - `io.load_table`/`io.save_table` 可在 `xarray.Dataset` 与 `csv/NetCDF` 等格式间转换。
-- CV 分析器可自动提取氧化/还原峰与净电荷等指标。
+- `CV` 分析器可自动提取氧化/还原峰与净电荷等指标。
