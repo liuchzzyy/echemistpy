@@ -54,6 +54,32 @@ class BiologicMPTReader:
     ``galvani`` project and includes a light-weight compatibility layer so that
     new column identifiers are automatically exposed instead of failing the
     parse.
+
+    **Enhanced Information Extraction for .mpr files:**
+
+    This reader now extracts comprehensive information from MPR files including:
+
+    - All standard attributes (version, columns, dates, timestamps)
+    - Module information (VMP settings, VMP data, VMP log)
+    - VMP settings data with readable strings (battery capacity, technique names)
+    - Flags dictionary for understanding data column meanings
+    - Number of data points (npts)
+    - Complete module metadata (names, versions, dates, sizes)
+
+    The additional metadata is stored in the ``extras`` dictionary of the
+    :class:`MeasurementMetadata` and can be accessed via:
+
+    .. code-block:: python
+
+        reader = BiologicMPTReader()
+        measurement = reader.read("file.mpr")
+
+        # Access enhanced metadata
+        extras = measurement.metadata.extras
+        print(extras["mpr_modules"])           # Module information
+        print(extras["mpr_vmp_settings"])      # VMP settings
+        print(extras["mpr_flags_dict"])        # Data flags meanings
+        print(extras["mpr_npts"])              # Number of data points
     """
 
     def __init__(self):
@@ -178,7 +204,9 @@ class BiologicMPTReader:
     def _process_data_line(self, line: str) -> None:
         data_strings_from_line = line.strip().split()
         for name, value_string in zip_longest(
-            self.state.column_names, data_strings_from_line, fillvalue="0",
+            self.state.column_names,
+            data_strings_from_line,
+            fillvalue="0",
         ):
             parsed_value = self._parse_float(value_string, column=name)
             # Directly append without setdefault since dict is pre-initialized
@@ -222,8 +250,7 @@ class BiologicMPTReader:
             array = np.asarray(values, dtype=float)
             if len(array) != n_rows:
                 warnings.warn(
-                    f"Skipping column '{column_name}' because it has {len(array)} samples "
-                    f"while the time base has {n_rows}.",
+                    f"Skipping column '{column_name}' because it has {len(array)} samples while the time base has {n_rows}.",
                 )
                 continue
             data_vars[column_name] = xr.DataArray(
@@ -317,6 +344,7 @@ class BiologicMPTReader:
         time_values = np.asarray(data[t_str], dtype=float)
         dataset = dataset.assign_coords({t_str: (dim_name, time_values)})
 
+        # Extract comprehensive metadata from mpr file
         extras: dict[str, object] = {
             "ec_technique": self.state.ec_technique,
             "timestamp_string": None,
@@ -326,6 +354,7 @@ class BiologicMPTReader:
             "mpr_columns": tuple(int(value) for value in getattr(mpr_file, "cols", [])),
         }
 
+        # Add basic MPR file attributes
         loop_index = getattr(mpr_file, "loop_index", None)
         if loop_index is not None:
             extras["mpr_loop_index"] = list(loop_index)
@@ -338,6 +367,49 @@ class BiologicMPTReader:
         if end_date is not None:
             extras["mpr_end_date"] = str(end_date)
 
+        # Add number of data points
+        npts = getattr(mpr_file, "npts", None)
+        if npts is not None:
+            extras["mpr_npts"] = list(npts) if hasattr(npts, "__iter__") else [npts]
+
+        # Extract flags dictionary for understanding data flags
+        flags_dict = getattr(mpr_file, "flags_dict", None)
+        if flags_dict is not None:
+            extras["mpr_flags_dict"] = dict(flags_dict)
+
+        # Extract information from modules
+        modules_info = []
+        vmp_settings = None
+        vmp_log_data = None
+
+        if hasattr(mpr_file, "modules") and mpr_file.modules:
+            for module in mpr_file.modules:
+                module_info = {
+                    "shortname": module.get("shortname", b"").decode("utf-8", errors="ignore").strip(),
+                    "longname": module.get("longname", b"").decode("utf-8", errors="ignore").strip(),
+                    "version": module.get("version", None),
+                    "date": module.get("date", b"").decode("utf-8", errors="ignore").strip(),
+                    "length": module.get("length", None),
+                }
+                modules_info.append(module_info)
+
+                # Extract VMP settings if available
+                if module.get("shortname") == b"VMP Set   " and "data" in module:
+                    vmp_settings = self._extract_vmp_settings(module["data"])
+
+                # Extract VMP log data if available
+                if module.get("shortname") == b"VMP LOG   " and "data" in module:
+                    vmp_log_data = self._extract_vmp_log_data(module["data"])
+
+        if modules_info:
+            extras["mpr_modules"] = modules_info
+
+        if vmp_settings:
+            extras["mpr_vmp_settings"] = vmp_settings
+
+        if vmp_log_data:
+            extras["mpr_vmp_log"] = vmp_log_data
+
         timestamp = extras["tstamp"]
         if timestamp is not None:
             extras["tstamp"] = float(timestamp.timestamp())
@@ -349,8 +421,7 @@ class BiologicMPTReader:
             from galvani import BioLogic
         except ImportError as exc:  # pragma: no cover - optional dependency
             raise BiologicReadError(
-                "Reading .mpr files requires the optional 'galvani' package. "
-                "Install it to enable binary BioLogic parsing.",
+                "Reading .mpr files requires the optional 'galvani' package. Install it to enable binary BioLogic parsing.",
             ) from exc
 
         if self.path_to_file is None:
@@ -369,8 +440,7 @@ class BiologicMPTReader:
                     ) from exc
                 if column_id in patched_ids:
                     raise BiologicReadError(
-                        f"Repeated failure while registering column ID {column_id} "
-                        f"for {self.path_to_file}",
+                        f"Repeated failure while registering column ID {column_id} for {self.path_to_file}",
                     ) from exc
                 self._register_unknown_column(column_id, BioLogic)
                 patched_ids.add(column_id)
@@ -382,6 +452,66 @@ class BiologicMPTReader:
                 raise BiologicReadError(
                     f"Unable to parse BioLogic file {self.path_to_file}: {exc}",
                 ) from exc
+
+    def _extract_vmp_settings(self, data: bytes) -> dict[str, object]:
+        """Extract human-readable information from VMP settings data."""
+        settings = {}
+
+        # Try to extract readable strings from the binary data
+        text_strings = []
+        current_text = b""
+
+        for byte in data:
+            if 32 <= byte <= 126:  # Printable ASCII characters
+                current_text += bytes([byte])
+            else:
+                if len(current_text) >= 3:  # Only keep strings of 3+ characters
+                    text_strings.append(current_text.decode("ascii"))
+                current_text = b""
+
+        # Add final string if it exists
+        if len(current_text) >= 3:
+            text_strings.append(current_text.decode("ascii"))
+
+        # Store all readable strings
+        if text_strings:
+            settings["readable_strings"] = text_strings
+
+            # Try to identify common settings
+            for text in text_strings:
+                text_lower = text.lower()
+                if any(keyword in text_lower for keyword in ["a.h", "mah", "wh"]):
+                    settings["battery_capacity"] = text.strip()
+                elif any(keyword in text_lower for keyword in ["gitt", "gcpl", "gcps", "oca", "eis"]):
+                    settings["technique_name"] = text.strip()
+                elif "unspecified" in text_lower:
+                    settings["reference_electrode"] = text.strip()
+
+        return settings
+
+    def _extract_vmp_log_data(self, data: bytes) -> dict[str, object]:
+        """Extract information from VMP log data."""
+        log_info = {}
+
+        # Try to decode log data as text
+        try:
+            # Try different encodings
+            for encoding in ["utf-8", "ascii", "latin-1"]:
+                try:
+                    text_data = data.decode(encoding, errors="ignore")
+                    if len(text_data.strip()) > 0:
+                        log_info["log_text"] = text_data.strip()
+                        break
+                except UnicodeDecodeError:
+                    continue
+        except Exception as exc:
+            # Log decoding error but continue - we'll still extract size info
+            warnings.warn(f"Could not decode VMP log data: {exc}", stacklevel=2)
+
+        # If we can't decode as text, at least store the size
+        log_info["log_size_bytes"] = len(data)
+
+        return log_info
 
     @staticmethod
     def _extract_column_id_from_error(error: Exception) -> int | None:
@@ -395,8 +525,7 @@ class BiologicMPTReader:
         name = f"unknown_{column_id}"
         if column_id not in module.VMPdata_colID_dtype_map:
             warnings.warn(
-                f"Encountered unknown BioLogic column ID {column_id}. Treating it "
-                "as a floating-point trace.",
+                f"Encountered unknown BioLogic column ID {column_id}. Treating it as a floating-point trace.",
                 stacklevel=2,
             )
             module.VMPdata_colID_dtype_map[column_id] = (name, "<f4")
@@ -419,7 +548,8 @@ class BiologicMPTReader:
 # Public helpers
 # ----------------------------------------------------------------------
 
-def fix_WE_potential(
+
+def fix_we_potential(
     measurement: Measurement,
     *,
     ewe_key: str = "<Ewe>/V",
@@ -428,7 +558,7 @@ def fix_WE_potential(
 ) -> Measurement:
     """Fix columns of zeros in ``<Ewe>/V`` for chronopotentiometry exports.
 
-    The function is a direct adaptation of :func:`ixdat.readers.biologic.fix_WE_potential`
+    The function is a direct adaptation of :func:`ixdat.readers.biologic.fix_we_potential`
     but operates on echemistpy's :class:`Measurement` containers.
     """
 
@@ -519,7 +649,7 @@ __all__ = [
     "BIOLOGIC_TIMESTAMP_FORMS",
     "BiologicMPTReader",
     "BiologicReadError",
-    "fix_WE_potential",
+    "fix_we_potential",
     "get_column_unit_name",
     "timestamp_string_to_tstamp",
 ]

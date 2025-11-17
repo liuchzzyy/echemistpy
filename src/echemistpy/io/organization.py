@@ -7,6 +7,7 @@ after it has been loaded by the loaders module but before analysis.
 from __future__ import annotations
 
 import warnings
+from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 
 import numpy as np
@@ -173,24 +174,40 @@ class DataCleaner:
                 "TIME": "time/s",
                 "t": "time/s",
                 "Time/s": "time/s",
-                # Potential/Voltage variants
+                # Cycle number variants
+                "Ns": "cycle_number",
+                "ns": "cycle_number",
+                "cycle": "cycle_number",
+                "Cycle": "cycle_number",
+                # Potential/Voltage variants (working electrode)
                 "potential": "Ewe/V",
                 "Potential": "Ewe/V",
-                "voltage": "Ewe/V",
-                "Voltage": "Ewe/V",
                 "E": "Ewe/V",
-                "V": "Ewe/V",
                 "Ewe": "Ewe/V",
+                # Battery voltage variants (cell voltage)
+                "voltage": "Voltage/V",
+                "Voltage": "Voltage/V",
+                "V": "Voltage/V",
+                "battery_voltage": "Voltage/V",
+                "Battery_Voltage": "Voltage/V",
+                "V_batt": "Voltage/V",
+                "Vbatt": "Voltage/V",
+                "cell_voltage": "Voltage/V",
+                "Cell_Voltage": "Voltage/V",
                 # Current variants
-                "current": "I/mA",
-                "Current": "I/mA",
-                "I": "I/mA",
-                "i": "I/mA",
-                # Charge variants
+                "current": "Current/mA",
+                "Current": "Current/mA",
+                "I": "Current/mA",
+                "i": "Current/mA",
+                "control/V/mA": "Current/mA",
+                "<I>/mA": "Current/mA",
+                # Charge/Capacity variants
                 "charge": "Q/mA.h",
                 "Charge": "Q/mA.h",
                 "Q": "Q/mA.h",
-                "capacity": "Q/mA.h",
+                "capacity": "Capacity/mAh",
+                "Capacity": "Capacity/mAh",
+                "(Q-Qo)/mA.h": "Capacity/mAh",
                 # Power variants
                 "power": "P/W",
                 "Power": "P/W",
@@ -198,10 +215,29 @@ class DataCleaner:
             }
 
         # Apply renaming only for columns that exist and have mappings
-        rename_dict = {old_name: new_name for old_name, new_name in name_mapping.items() if old_name in self.measurement.data.data_vars}
+        rename_dict = {}
+        for old_name, new_name in name_mapping.items():
+            if old_name in self.measurement.data.data_vars:
+                # Check if new name would conflict with existing column or already mapped column
+                if new_name not in self.measurement.data.data_vars and new_name not in rename_dict.values():
+                    rename_dict[old_name] = new_name
+                else:
+                    # Skip conflicting mappings with a warning
+                    warnings.warn(f"Skipping mapping {old_name} -> {new_name} due to conflict", stacklevel=2)
 
         if rename_dict:
             self.measurement.data = self.measurement.data.rename(rename_dict)
+
+        # Ensure Ece/V column exists for electrochemistry data
+        if "Ece/V" not in self.measurement.data.data_vars:
+            # Check if this might be electrochemistry data by looking for common echem columns
+            echem_indicators = ["Ewe/V", "Current/mA", "Time/s", "Cycle_number"]
+            has_echem_cols = any(col in self.measurement.data.data_vars for col in echem_indicators)
+
+            if has_echem_cols:
+                # Create Ece/V column filled with zeros
+                n_rows = len(self.measurement.data.coords["row"])
+                self.measurement.data["Ece/V"] = ("row", np.zeros(n_rows))
 
         return self
 
@@ -218,9 +254,13 @@ class DataCleaner:
         if type_mapping is None:
             # Standard type mappings for electrochemistry data
             type_mapping = {
-                "time/s": np.float64,
+                "Time/s": np.float64,
+                "Cycle_number": np.int64,
                 "Ewe/V": np.float64,
-                "I/mA": np.float64,
+                "Ece/V": np.float64,
+                "Voltage/V": np.float64,
+                "Current/mA": np.float64,
+                "Capacity/mAh": np.float64,
                 "Q/mA.h": np.float64,
                 "P/W": np.float64,
             }
@@ -367,14 +407,14 @@ def clean_measurement(measurement: Measurement, cleaning_steps: Optional[List[st
         elif step == "remove_duplicates":
             cleaner.remove_duplicates()
         elif step == "remove_outliers":
-            outlier_columns = kwargs.get("outlier_columns", ["Ewe/V", "I/mA"])
+            outlier_columns = kwargs.get("outlier_columns", ["Ewe/V", "Current/mA"])
             outlier_method = kwargs.get("outlier_method", "iqr")
             cleaner.remove_outliers(outlier_columns, method=outlier_method)
         elif step == "fill_missing":
             fill_method = kwargs.get("fill_method", "interpolate")
             cleaner.fill_missing_values(method=fill_method)
         elif step == "sort_by_time":
-            time_col = kwargs.get("time_column", "time/s")
+            time_col = kwargs.get("time_column", "Time/s")
             if time_col in cleaner.measurement.data.data_vars:
                 cleaner.sort_by_column(time_col)
         else:
@@ -442,37 +482,51 @@ class DataStandardizer:
     STANDARD_MAPPINGS = {
         "electrochemistry": {
             # Time variants
-            "time": "time/s",
-            "Time": "time/s",
-            "TIME": "time/s",
-            "t": "time/s",
-            "Time/s": "time/s",
-            "time_s": "time/s",
-            "Time_s": "time/s",
-            # Potential/Voltage variants
+            "time": "Time/s",
+            "Time": "Time/s",
+            "TIME": "Time/s",
+            "t": "Time/s",
+            "Time/s": "Time/s",
+            "time_s": "Time/s",
+            "Time_s": "Time/s",
+            # Cycle variants
+            "Ns": "Cycle_number",
+            "ns": "Cycle_number",
+            "cycle": "Cycle_number",
+            "Cycle": "Cycle_number",
+            # Potential/Voltage variants (working electrode)
             "potential": "Ewe/V",
             "Potential": "Ewe/V",
-            "voltage": "Ewe/V",
-            "Voltage": "Ewe/V",
             "E": "Ewe/V",
-            "V": "Ewe/V",
             "Ewe": "Ewe/V",
             "potential_V": "Ewe/V",
-            "voltage_V": "Ewe/V",
+            # Battery voltage variants (cell voltage)
+            "voltage": "Voltage/V",
+            "Voltage": "Voltage/V",
+            "V": "Voltage/V",
+            "voltage_V": "Voltage/V",
+            "battery_voltage": "Voltage/V",
+            "Battery_Voltage": "Voltage/V",
+            "V_batt": "Voltage/V",
+            "Vbatt": "Voltage/V",
+            "cell_voltage": "Voltage/V",
+            "Cell_Voltage": "Voltage/V",
             # Current variants
-            "current": "I/mA",
-            "Current": "I/mA",
-            "I": "I/mA",
-            "i": "I/mA",
-            "current_mA": "I/mA",
-            "I_mA": "I/mA",
-            "<I>/mA": "I/mA",
-            # Charge variants
+            "current": "Current/mA",
+            "Current": "Current/mA",
+            "I": "Current/mA",
+            "i": "Current/mA",
+            "current_mA": "Current/mA",
+            "I_mA": "Current/mA",
+            "<I>/mA": "Current/mA",
+            "control/V/mA": "Current/mA",
+            # Charge/Capacity variants
             "charge": "Q/mA.h",
             "Charge": "Q/mA.h",
             "Q": "Q/mA.h",
-            "capacity": "Q/mA.h",
-            "Capacity": "Q/mA.h",
+            "capacity": "Capacity/mAh",
+            "Capacity": "Capacity/mAh",
+            "(Q-Qo)/mA.h": "Capacity/mAh",
             # Power variants
             "power": "P/W",
             "Power": "P/W",
@@ -607,8 +661,8 @@ class DataStandardizer:
 
         # Check for technique-specific required columns
         technique_requirements = {
-            "cv": ["time/s", "Ewe/V", "I/mA"],
-            "gcd": ["time/s", "Ewe/V", "I/mA"],
+            "cv": ["time/s", "Ewe/V", "Current/mA"],
+            "gcd": ["time/s", "Ewe/V", "Current/mA"],
             "eis": ["freq/Hz", "Re_Z/Ohm", "Im_Z/Ohm"],
             "xrd": ["2theta/deg", "intensity/counts"],
             "xps": ["BE/eV", "intensity/cps"],
@@ -720,3 +774,155 @@ def detect_measurement_technique(measurement: Measurement) -> str:
 
     # Default fallback
     return "unknown"
+
+
+def _combine_mpr_datetime(mpr_start_date: str, tstamp: float) -> str:
+    """Combine MPR start date and timestamp into formatted datetime string."""
+    if not mpr_start_date or tstamp is None:
+        return "Unknown_Time"
+
+    try:
+        if isinstance(mpr_start_date, str):
+            # Handle different date formats
+            base_date = None
+
+            if "/" in mpr_start_date:
+                # Format: "MM/DD/YY" or "MM/DD/YYYY"
+                date_parts = mpr_start_date.split("/")
+                if len(date_parts) == 3:
+                    month, day, year = date_parts
+                    # Handle 2-digit year
+                    if len(year) == 2:
+                        year_int = int(year)
+                        year = f"20{year}" if year_int < 50 else f"19{year}"
+                    base_date = datetime(int(year), int(month), int(day))
+            elif "-" in mpr_start_date:
+                # Format: "YYYY-MM-DD"
+                date_parts = mpr_start_date.split("-")
+                if len(date_parts) == 3:
+                    year, month, day = date_parts
+                    base_date = datetime(int(year), int(month), int(day))
+
+            if base_date and isinstance(tstamp, (int, float)):
+                # tstamp appears to be Unix timestamp, convert to datetime
+                from datetime import datetime as dt
+
+                tstamp_dt = dt.fromtimestamp(tstamp)
+                return tstamp_dt.strftime("%Y-%m-%d %H:%M:%S")
+            elif base_date:
+                return base_date.strftime("%Y-%m-%d 00:00:00")
+
+        return f"{mpr_start_date} (tstamp: {tstamp})"
+    except (ValueError, TypeError) as e:
+        warnings.warn(f"Could not parse mpr_start_date and tstamp: {e}", stacklevel=2)
+        return f"{mpr_start_date} + {tstamp}s"
+
+
+def clean_echem_metadata(measurement: Measurement) -> Measurement:
+    """Clean and standardize Echem measurement metadata.
+
+    This function handles electrochemistry data metadata cleaning,
+    ensuring required fields are present and combining mpr_start_date
+    and tstamp into a single mpr_start_time field.
+
+    Args:
+        measurement: The measurement object with Echem data
+
+    Returns:
+        Measurement object with cleaned and standardized metadata
+
+    Required metadata fields:
+        - sample_name: Name of the sample
+        - instrument: Instrument used for measurement
+        - operator: Operator who performed the measurement
+        - mpr_version: Version of the MPR file format
+        - mpr_start_time: Combined start date and timestamp
+        - reference_electrode: Type of reference electrode used
+    """
+    cleaned_measurement = measurement.copy()
+    metadata = cleaned_measurement.metadata
+    extras = metadata.extras
+
+    # Set basic metadata with defaults if missing
+    if not metadata.sample_name or metadata.sample_name == "unknown":
+        metadata.sample_name = extras.get("filename", "Unknown_Sample")
+
+    if not metadata.instrument:
+        metadata.instrument = "BioLogic EC-Lab"
+
+    if not metadata.operator:
+        metadata.operator = "Unknown_Operator"
+
+    # Set version info
+    if "mpr_version" not in extras:
+        extras["mpr_version"] = "Unknown_Version"
+
+    # Combine date and timestamp
+    mpr_start_date = extras.get("mpr_start_date", "")
+    tstamp = extras.get("tstamp", 0)
+    extras["mpr_start_time"] = _combine_mpr_datetime(mpr_start_date, tstamp)
+
+    # Extract reference electrode
+    reference_electrode = "Unknown_Electrode"
+    vmp_settings = extras.get("mpr_vmp_settings", {})
+    if isinstance(vmp_settings, dict):
+        if "reference_electrode" in vmp_settings:
+            reference_electrode = vmp_settings["reference_electrode"]
+        elif "readable_strings" in vmp_settings:
+            for string in vmp_settings["readable_strings"]:
+                if any(word in string.lower() for word in ["electrode", "ref", "reference"]):
+                    reference_electrode = string
+                    break
+
+    # Clean up reference electrode value - remove parentheses from (unspecified)
+    if reference_electrode == "(unspecified)":
+        reference_electrode = "unspecified"
+
+    extras["reference_electrode"] = reference_electrode
+
+    return cleaned_measurement
+
+
+def validate_echem_metadata(measurement: Measurement) -> Dict[str, any]:
+    """Validate that Echem measurement metadata contains all required fields.
+
+    Args:
+        measurement: The measurement object to validate
+
+    Returns:
+        Dictionary containing validation results with keys:
+        - 'is_valid': Boolean indicating if all required fields are present
+        - 'missing_fields': List of missing required fields
+        - 'warnings': List of warning messages
+        - 'field_values': Dictionary of current field values
+    """
+    validation_result = {"is_valid": True, "missing_fields": [], "warnings": [], "field_values": {}}
+
+    metadata = measurement.metadata
+    extras = metadata.extras
+
+    # Define required fields and their locations
+    required_fields = {
+        "sample_name": ("metadata", "sample_name"),
+        "instrument": ("metadata", "instrument"),
+        "operator": ("metadata", "operator"),
+        "mpr_version": ("extras", "mpr_version"),
+        "mpr_start_time": ("extras", "mpr_start_time"),
+        "reference_electrode": ("extras", "reference_electrode"),
+    }
+
+    # Check each required field
+    for field, (location, key) in required_fields.items():
+        if location == "metadata":
+            value = getattr(metadata, key, None)
+        else:  # location == 'extras'
+            value = extras.get(key, None)
+
+        validation_result["field_values"][field] = value
+
+        if not value or value in ["Unknown_Sample", "Unknown_Operator", "Unknown_Version", "Unknown_Time", "Unknown_Electrode"]:
+            validation_result["missing_fields"].append(field)
+            validation_result["is_valid"] = False
+            validation_result["warnings"].append(f"Field '{field}' is missing or has default value")
+
+    return validation_result

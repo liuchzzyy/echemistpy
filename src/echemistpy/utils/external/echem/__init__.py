@@ -5,7 +5,7 @@ from .biologic_reader import (
     BIOLOGIC_TIMESTAMP_FORMS,
     BiologicMPTReader,
     BiologicReadError,
-    fix_WE_potential,
+    fix_we_potential,
     get_column_unit_name,
     timestamp_string_to_tstamp,
 )
@@ -24,7 +24,7 @@ __all__ = [
     "BiologicReadError",
     "LanheReader",
     "SampleRecord",
-    "fix_WE_potential",
+    "fix_we_potential",
     "format_block_summary",
     "format_metadata",
     "get_column_unit_name",
