@@ -50,10 +50,22 @@ def _load_json_table(path: Path, **_: Any) -> xr.Dataset:
     return xr.Dataset(data_vars=data_vars, coords={"row": np.arange(len(records))})
 
 
+def _load_lanhe_ccs(path: Path, **kwargs: Any) -> xr.Dataset:
+    """Load LANHE ``*.ccs`` binary files using :class:`LanheReader`."""
+
+    tag_filter = kwargs.pop("tag_filter", None)
+    channel_filter = kwargs.pop("channel_filter", None)
+    from echemistpy.utils.external.echem.lanhe_reader import LanheReader
+
+    reader = LanheReader(path)
+    return reader.to_dataset(tag_filter=tag_filter, channel_filter=channel_filter)
+
+
 _LOADER_MAP: Dict[str, Loader] = {
     "csv": lambda path, **kwargs: _load_delimited(path, delimiter=",", **kwargs),
     "tsv": lambda path, **kwargs: _load_delimited(path, delimiter="\t", **kwargs),
     "json": _load_json_table,
+    "ccs": _load_lanhe_ccs,
     "nc": lambda path, **kwargs: xr.open_dataset(path, **kwargs),
     "nc4": lambda path, **kwargs: xr.open_dataset(path, **kwargs),
     "netcdf": lambda path, **kwargs: xr.open_dataset(path, **kwargs),
@@ -258,6 +270,7 @@ def list_supported_formats() -> Dict[str, str]:
         "csv": "Comma-separated values",
         "tsv": "Tab-separated values",
         "json": "JSON table format",
+        "ccs": "LANHE proprietary cycler files",
         "nc/nc4/netcdf": "NetCDF format",
         "xlsx/xls": "Excel spreadsheet (requires pandas)",
         "h5/hdf5/hdf": "HDF5 format",

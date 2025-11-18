@@ -14,6 +14,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
+from echemistpy.io.loaders import load_data_file
 from echemistpy.utils.external.echem import BiologicMPTReader
 from echemistpy.utils.external.echem.biologic_reader import t_str
 from echemistpy.utils.external.echem.lanhe_reader import LanheReader
@@ -251,7 +252,7 @@ class TestLanheReaderGPCL:
         """Verify CSV export functionality."""
         csv_file = tmp_path / "test_export.csv"
         reader.export_csv(csv_file, tag_filter=0x0603)
-        
+
         assert csv_file.exists()
         assert csv_file.stat().st_size > 0
         
@@ -260,6 +261,13 @@ class TestLanheReaderGPCL:
             header = f.readline()
             assert "elapsed_s" in header
             assert "value1" in header
+
+    def test_to_dataset_roundtrip(self, reader):
+        """Verify conversion to xarray Dataset preserves key information."""
+        dataset = reader.to_dataset()
+        assert dataset.sizes["sample_index"] == len(reader.samples)
+        assert "lanhe_metadata" in dataset.attrs
+        assert "value1" in dataset.data_vars
 
 
 class TestReaderCompatibility:
@@ -304,6 +312,20 @@ class TestReaderCompatibility:
         assert len(reader1.samples) == len(reader2.samples)
         assert reader1.metadata == reader2.metadata
 
+
+class TestLanheLoaderIntegration:
+    """Ensure the generic loader can ingest LANHE binary files."""
+
+    def test_load_data_file_returns_dataset(self):
+        dataset = load_data_file(ECHEM_DIR / "LANHE_GPCL.ccs")
+        assert dataset.sizes["sample_index"] > 0
+        assert "value1" in dataset
+        assert dataset.attrs["lanhe_metadata"]["test_name"]
+
+    def test_load_data_file_all_tags(self):
+        data_only = load_data_file(ECHEM_DIR / "LANHE_GPCL.ccs", tag_filter=0x0603)
+        everything = load_data_file(ECHEM_DIR / "LANHE_GPCL.ccs", tag_filter=None)
+        assert everything.sizes["sample_index"] >= data_only.sizes["sample_index"]
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
