@@ -55,9 +55,7 @@ class Measurement:
     def require_variables(self, variables: Iterable[str]) -> None:
         missing = [name for name in variables if name not in self.data.variables]
         if missing:
-            raise ValueError(
-                "Measurement is missing required variables: " + ", ".join(missing)
-            )
+            raise ValueError("Measurement is missing required variables: " + ", ".join(missing))
 
     # Backwards compatible alias
     def require_columns(self, columns: Iterable[str]) -> None:  # pragma: no cover - thin wrapper
@@ -87,6 +85,8 @@ class AnalysisResult:
             tables=merged_tables,
             figures=merged_figures,
         )
+
+
 @dataclass(slots=True)
 class NXField:
     """Representation of a NeXus dataset.
@@ -187,7 +187,7 @@ class NXFile:
     def to_xarray_tree(self) -> Dict[str, xr.Dataset]:
         """Materialize the full hierarchy as ``path -> Dataset`` mapping."""
 
-        return {path: dataset for path, dataset in self.iter_datasets()}
+        return dict(self.iter_datasets())
 
 
 @dataclass(slots=True)
@@ -321,3 +321,17 @@ def create_nxxbase_template() -> NXFile:
     """Backward compatible helper that returns :class:`NXEchemBase`."""
 
     return NXEchemBase().to_nxfile()
+
+
+__all__ = [
+    "AnalysisResult",
+    "Axis",
+    "Measurement",
+    "MeasurementMetadata",
+    "NXEchemBase",
+    "NXField",
+    "NXFile",
+    "NXGroup",
+    "NXLink",
+    "create_nxxbase_template",
+]

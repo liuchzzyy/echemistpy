@@ -142,7 +142,8 @@ class BiologicMPTReader:
     # Parsing helpers (ported from ixdat)
     # ------------------------------------------------------------------
     def _series_list_from_mpt(self) -> None:
-        assert self.path_to_file is not None
+        if self.path_to_file is None:
+            raise BiologicReadError("No file path provided.")
         with open(self.path_to_file, encoding="ISO-8859-1") as handle:
             for line in handle:
                 self._process_line(line)
@@ -166,9 +167,9 @@ class BiologicMPTReader:
     def _process_header_line(self, line: str) -> None:
         self.state.header_lines.append(line)
         if not self.state.N_header_lines:
-            N_head_match = re.search(regular_expressions["N_header_lines"], line)
-            if N_head_match:
-                self.state.N_header_lines = int(N_head_match.group(1))
+            n_head_match = re.search(regular_expressions["N_header_lines"], line)
+            if n_head_match:
+                self.state.N_header_lines = int(n_head_match.group(1))
                 return
         if self.state.n_line == 3:
             self.state.ec_technique = line.strip()
@@ -225,6 +226,7 @@ class BiologicMPTReader:
                     pass
             warnings.warn(
                 f"Can't parse value string '{value_string}' in column '{column}'. Using 0",
+                stacklevel=2,
             )
             return 0.0
 
@@ -251,6 +253,7 @@ class BiologicMPTReader:
             if len(array) != n_rows:
                 warnings.warn(
                     f"Skipping column '{column_name}' because it has {len(array)} samples while the time base has {n_rows}.",
+                    stacklevel=2,
                 )
                 continue
             data_vars[column_name] = xr.DataArray(
@@ -416,7 +419,15 @@ class BiologicMPTReader:
 
         return dataset, extras, time_values
 
-    def _read_mpr_file(self):
+    def _read_mpr_file(self) -> object:
+        """Read and parse a .mpr file using the galvani library.
+
+        Returns:
+            BioLogic.MPRfile object containing the parsed data.
+
+        Raises:
+            BiologicReadError: If the file cannot be read or parsed.
+        """
         try:
             from galvani import BioLogic
         except ImportError as exc:  # pragma: no cover - optional dependency

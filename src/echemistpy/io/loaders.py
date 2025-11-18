@@ -59,6 +59,9 @@ _LOADER_MAP: Dict[str, Loader] = {
     "netcdf": lambda path, **kwargs: xr.open_dataset(path, **kwargs),
 }
 
+# Alias for backwards compatibility
+_LOADERS = _LOADER_MAP
+
 
 def load_table(path: str | Path, *, fmt: Optional[str] = None, storage_options: Optional[Mapping[str, Any]] = None, **kwargs: Any) -> xr.Dataset:
     """Load a tabular file into an :class:`xarray.Dataset`.
@@ -276,3 +279,13 @@ _LOADER_MAP.update({
     "asc": _load_auto_delimited,
     "prn": _load_auto_delimited,
 })
+
+
+__all__ = [
+    "Loader",
+    "get_file_info",
+    "list_supported_formats",
+    "load_data_file",
+    "load_table",
+    "register_loader",
+]

@@ -31,12 +31,20 @@ class CustomAnalyzer(TechniqueAnalyzer):
 ## 开发工作流
 
 ### 环境配置
-使用 Conda 环境 "txm" (见 `environment.yml`)：
+使用 Conda 环境 "txm" (见 `environment.yml` 和 `pyproject.toml`)：
 ```powershell
-conda create -n txm python=3.10
-conda config --add channels spectrocat --add channels conda-forge
-conda install -n txm -y exspy hyperspy[all] jupyterlab matplotlib numpy scipy xarray
+# 快速安装 (参见 README.md 完整版本)
+winget install -e --id Anaconda.Miniconda3
+& "$env:LOCALAPPDATA\miniconda3\Scripts\conda.exe" create -y -n txm python=3.10
+& "$env:LOCALAPPDATA\miniconda3\Scripts\conda.exe" config --add channels spectrocat --add channels conda-forge
+& "$env:LOCALAPPDATA\miniconda3\Scripts\conda.exe" install -n txm -y exspy hyperspy[all] jupyterlab matplotlib numpy scipy xarray galvani
+conda activate txm
 ```
+
+注意：
+- 环境位置：`C:\Users\<you>\AppData\Local\miniconda3\envs\txm`
+- 核心依赖：`xarray`, `galvani` (BioLogic), `hyperspy`, `spectrochempy`
+- 开发工具：`ruff` 用于代码质量，`pytest` 用于测试
 
 ### 测试策略
 - `tests/test_doctests.py`: 验证所有公开模块的 docstring 示例
@@ -59,10 +67,10 @@ ruff format src/ tests/  # 代码格式化
 
 ### 外部数据读取器
 位于 `utils/external/echem/`，例如：
-- `biologic_reader.py`: BioLogic .mpt/.mpr 文件解析器
-- `lanhe_reader.py`: LANHE .ccs 文件解析器
+- `biologic_reader.py`: BioLogic .mpt/.mpr 文件解析器 (`BiologicMPTReader` 类)
+- `lanhe_reader.py`: LANHE .ccs 文件解析器 (`LanheReader` 类)
 
-新读取器应返回 `Measurement` 对象，包含正确的元数据和轴定义。
+新读取器应返回 `Measurement` 对象，包含正确的元数据和轴定义。读取器使用状态机模式 (`_ReaderState`) 处理复杂文件格式。
 
 ### I/O 模式
 - `io/loaders.py`: `load_table()` 支持 CSV/TSV/JSON/NetCDF 格式
@@ -77,10 +85,12 @@ ruff format src/ tests/  # 代码格式化
 - 所有源码使用绝对导入: `from echemistpy.io import Measurement`
 
 ### 数据约定
-- 时间列统一使用 `"time/s"` 标识符
-- 电压列使用 `"Ewe/V"` (工作电极电位)
+- 时间列统一使用 `"time/s"` 标识符 (`t_str` 常量)
+- 电压列使用 `"Ewe/V"` (工作电极电位) 或 `"potential"`
 - 电流列使用 `"<I>/mA"` 或 `"current"`
 - 所有数据维度名称为 `"row"`
+- 数据预处理：基线校正 (`baseline_corrected`)、归一化 (`normalized_current`)
+- 分析器输出：`summary` (字典) + `tables` (xarray.Dataset 字典)
 
 ### 测试数据
 使用 `examples/echem/` 中的真实仪器文件进行集成测试，确保读取器能处理实际实验室数据格式。
