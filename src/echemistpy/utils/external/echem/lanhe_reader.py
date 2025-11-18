@@ -37,6 +37,7 @@ from collections import Counter, defaultdict
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 BLOCK_SIZE = 128
 HEADER_SIZE = 0x1000
@@ -259,6 +260,71 @@ class LanheReader:
                         "value4": f"{v4:.9f}",
                     },
                 )
+
+    def to_dataset(
+        self,
+        *,
+        tag_filter: int | None = None,
+        channel_filter: int | None = None,
+    ) -> "xr.Dataset":
+        """Convert decoded samples into an :class:`xarray.Dataset`.
+
+        The resulting dataset exposes every decoded sample as a row along the
+        ``sample_index`` dimension.  Standard columns such as ``elapsed_s``,
+        ``delta_ms``, ``tag``, ``channel_id`` and the raw ``value1``-``value4``
+        streams are provided to make downstream analysis and visualization
+        simpler than working with the low-level :class:`SampleRecord` objects.
+
+        Parameters
+        ----------
+        tag_filter:
+            Optional block tag to filter on.  ``None`` (the default) keeps all
+            decoded tags so callers can inspect auxiliary segments in addition
+            to the primary 0x0603 data blocks.
+        channel_filter:
+            If provided, restricts samples to a particular channel.
+        """
+
+        try:
+            import numpy as np
+            import xarray as xr
+        except ImportError as exc:  # pragma: no cover - exercised indirectly
+            raise ImportError(
+                "LanheReader.to_dataset requires numpy and xarray to be installed.",
+            ) from exc
+
+        records = list(self.iter_samples(tag_filter=tag_filter, channel_filter=channel_filter))
+        if not records:
+            return xr.Dataset()
+
+        sample_dim = np.arange(len(records), dtype=np.int64)
+        value_matrix = np.asarray([rec.values for rec in records], dtype=np.float32)
+
+        data_vars: dict[str, tuple[tuple[str, ...], Any]] = {
+            "block_index": (("sample_index",), np.fromiter((rec.block_index for rec in records), dtype=np.int64)),
+            "tag": (("sample_index",), np.fromiter((rec.tag for rec in records), dtype=np.int32)),
+            "channel_id": (("sample_index",), np.fromiter((rec.channel_id for rec in records), dtype=np.int32)),
+            "delta_ms": (("sample_index",), np.fromiter((rec.delta_ms for rec in records), dtype=np.int32)),
+            "elapsed_s": (("sample_index",), np.fromiter((rec.elapsed_s for rec in records), dtype=np.float64)),
+            "tag_name": (("sample_index",), np.asarray([rec.tag_name for rec in records], dtype=object)),
+        }
+
+        if value_matrix.size:
+            for idx in range(value_matrix.shape[1]):
+                data_vars[f"value{idx + 1}"] = (("sample_index",), value_matrix[:, idx])
+
+        dataset = xr.Dataset(data_vars=data_vars, coords={"sample_index": sample_dim})
+        dataset.attrs.update(
+            {
+                "lanhe_path": str(self.path),
+                "lanhe_metadata": self.metadata,
+                "lanhe_block_counts": {
+                    f"tag_{tag:#06x}_channel_{channel:#04x}": count
+                    for (tag, channel), count in self.block_counts.items()
+                },
+            },
+        )
+        return dataset
 
 
 # ----------------------------------------------------------------------
