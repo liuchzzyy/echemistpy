@@ -40,39 +40,44 @@
 
 ### echemistpy 包概览
 
-`echemistpy`（位于 `src/`）提供统一的数据模型和分析管线，支持 XRD、XPS、TGA、CV 等技术。典型工作流程：
+`echemistpy`（位于 `src/`）提供统一的数据模型和分析管线，支持 XRD、XPS、TGA、CV 等技术。
+
+#### 核心 IO 工作流 (Read -> Standardize -> Save)
+
+`echemistpy` 采用三步数据处理流程：
+1. **Read**: 使用 `load_data_file` 读取原始文件，生成包含原始数据和元数据的 `RawMeasurement`。
+2. **Standardize**: 使用 `standardize_measurement` 将原始数据转换为标准化的 `Measurement`（数据）和 `MeasurementInfo`（元数据）。
+3. **Save**: 使用 `save_measurement` 将标准化数据保存为 CSV（带元数据头）或 HDF5/NetCDF（完整数据结构）。
+
+典型工作流程：
 
 ```python
 from pathlib import Path
+from echemistpy.io import load_data_file, standardize_measurement, save_measurement
 
-import numpy as np
-import xarray as xr
+# 1. 读取数据 (自动检测格式)
+raw_meas = load_data_file("raw_data.json")
 
-from echemistpy import (
-    AnalysisPipeline,
-    Measurement,
-    MeasurementMetadata,
-    default_registry,
-)
+# 2. 标准化 (自动识别技术并重命名列，例如 Time -> Time/s)
+meas, info = standardize_measurement(raw_meas)
 
-theta = np.linspace(10, 80, 200)
-intensity = np.sin(theta / 10) ** 2
+print(f"Technique: {info.technique}")
+print(f"Standardized Vars: {list(meas.data.data_vars)}")
 
-data = xr.Dataset({
-    "2theta": ("row", theta),
-    "intensity": ("row", intensity),
-})
-metadata = MeasurementMetadata(technique="xrd", sample_name="Sample-01")
-measurement = Measurement(data=data, metadata=metadata)
+# 3. 保存数据
+# 保存为 CSV (适用于 1D/2D 表格数据，元数据作为注释头)
+save_measurement(meas, info, "output.csv")
 
-pipeline = AnalysisPipeline(default_registry)
-results = pipeline.run([measurement])
-print(pipeline.summary_table(results))
+# 保存为 NetCDF (完整保存所有数据和元数据)
+save_measurement(meas, info, "output.nc")
 ```
 
-- 新增技术：继承 `TechniqueAnalyzer` 并注册到 `TechniqueRegistry`。
-- `utils/` 下包含 `math/`、`plotting/`、`external/`，用于数值算法与可视化扩展。
-- `io.load_table`/`io.save_table` 可在 `xarray.Dataset` 与 `csv/NetCDF` 等格式间转换。
+- **数据结构**:
+    - `RawMeasurement`: 原始数据容器。
+    - `Measurement`: 标准化后的数据 (`xarray.Dataset`)。
+    - `MeasurementInfo`: 标准化后的元数据 (`dataclass`)。
+    - `Results` / `ResultsInfo`: 分析结果及其元数据。
+- **扩展性**: `utils/` 下包含 `math/`、`plotting/`、`external/`，用于数值算法与可视化扩展。
 
 ### 仓库结构
 

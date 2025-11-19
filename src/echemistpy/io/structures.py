@@ -18,73 +18,82 @@ class Axis:
 
 
 @dataclass(slots=True)
-class MeasurementMetadata:
-    """Holds descriptive metadata for a measurement."""
+class RawMetadata:
+    """Container for all metadata extracted from the raw file."""
+    
+    meta: Dict[str, Any] = field(default_factory=dict)
 
-    technique: str
-    sample_name: str
+    def to_dict(self) -> Dict[str, Any]:
+        return self.meta
+
+
+@dataclass(slots=True)
+class RawData:
+    """Container for raw data tables or arrays."""
+    
+    data: Any  # Can be xarray.Dataset, pandas.DataFrame, or dict of arrays
+
+
+@dataclass(slots=True)
+class RawMeasurement:
+    """Container for the immediate result of loading a file."""
+    
+    data: RawData
+    metadata: RawMetadata
+
+
+@dataclass(slots=True)
+class MeasurementInfo:
+    """Standardized metadata for a measurement."""
+    
+    technique: str = "Unknown"
+    sample_name: str = "Unknown"
     instrument: Optional[str] = None
     operator: Optional[str] = None
-    extras: MutableMapping[str, Any] = field(default_factory=dict)
+    # Additional standardized fields can be added here
+    extras: Dict[str, Any] = field(default_factory=dict)
 
-    def copy(self) -> "MeasurementMetadata":
-        return MeasurementMetadata(
-            technique=self.technique,
-            sample_name=self.sample_name,
-            instrument=self.instrument,
-            operator=self.operator,
-            extras=dict(self.extras),
-        )
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "technique": self.technique,
+            "sample_name": self.sample_name,
+            "instrument": self.instrument,
+            "operator": self.operator,
+            "extras": self.extras,
+        }
 
 
 @dataclass(slots=True)
 class Measurement:
-    """Container representing the raw data from an experiment."""
-
+    """Container for standardized measurement data."""
+    
     data: xr.Dataset
-    metadata: MeasurementMetadata
-    axes: List[Axis] = field(default_factory=list)
-
-    def copy(self) -> "Measurement":
-        return Measurement(
-            data=self.data.copy(deep=True),
-            metadata=self.metadata.copy(),
-            axes=[Axis(axis.name, axis.unit, axis.values) for axis in self.axes],
-        )
-
-    def require_variables(self, variables: Iterable[str]) -> None:
-        missing = [name for name in variables if name not in self.data.variables]
-        if missing:
-            raise ValueError("Measurement is missing required variables: " + ", ".join(missing))
-
-    # Backwards compatible alias
-    def require_columns(self, columns: Iterable[str]) -> None:  # pragma: no cover - thin wrapper
-        self.require_variables(columns)
+    # Note: Metadata is now separate in MeasurementInfo
 
 
 @dataclass(slots=True)
-class AnalysisResult:
-    """A light-weight container for processed data."""
+class ResultsInfo:
+    """Metadata for analysis results."""
+    
+    processing_parameters: Dict[str, Any] = field(default_factory=dict)
+    remarks: str = ""
+    extras: Dict[str, Any] = field(default_factory=dict)
 
-    technique: str
-    sample_name: str
-    summary: Dict[str, Any]
-    tables: Dict[str, xr.Dataset] = field(default_factory=dict)
-    figures: Dict[str, Any] = field(default_factory=dict)
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "processing_parameters": self.processing_parameters,
+            "remarks": self.remarks,
+            "extras": self.extras,
+        }
 
-    def merge(self, other: "AnalysisResult") -> "AnalysisResult":
-        if self.sample_name != other.sample_name:
-            raise ValueError("Cannot merge results from different samples.")
-        merged_summary = {**self.summary, **other.summary}
-        merged_tables = {**self.tables, **other.tables}
-        merged_figures = {**self.figures, **other.figures}
-        return AnalysisResult(
-            technique=self.technique,
-            sample_name=self.sample_name,
-            summary=merged_summary,
-            tables=merged_tables,
-            figures=merged_figures,
-        )
+
+@dataclass(slots=True)
+class Results:
+    """Container for processed analysis results."""
+    
+    data: xr.Dataset
+    # Note: Metadata is now separate in ResultsInfo
+
 
 
 @dataclass(slots=True)
@@ -324,10 +333,14 @@ def create_nxxbase_template() -> NXFile:
 
 
 __all__ = [
-    "AnalysisResult",
     "Axis",
     "Measurement",
-    "MeasurementMetadata",
+    "MeasurementInfo",
+    "RawMeasurement",
+    "RawData",
+    "RawMetadata",
+    "Results",
+    "ResultsInfo",
     "NXEchemBase",
     "NXField",
     "NXFile",

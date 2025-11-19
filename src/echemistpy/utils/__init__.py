@@ -1,10 +1,11 @@
 """Utility helpers that glue together math, plotting, and external services."""
 
-from echemistpy.io import AnalysisResult, Axis, Measurement, MeasurementMetadata
+from echemistpy.io import Axis, Measurement, MeasurementInfo, Results, ResultsInfo
 
 __all__ = [
-    "AnalysisResult",
     "Axis",
     "Measurement",
-    "MeasurementMetadata",
+    "MeasurementInfo",
+    "Results",
+    "ResultsInfo",
 ]
