@@ -14,24 +14,31 @@ from .saver import save_measurement, save_results
 from .structures import (
     Measurement, 
     MeasurementInfo, 
-    RawMeasurement, 
     RawData, 
-    RawMetadata, 
-    Results, 
-    ResultsInfo,
-    Axis
+    RawDataInfo,
+    AnalysisResult,
+    AnalysisResultInfo,
+    NXFile,
+    NXGroup,
+    NXField,
+    NXLink
 )
+from .model import EChemEntry, EChemEntries
 
 __all__ = [
-    "Axis",
     "DataStandardizer",
     "Measurement",
     "MeasurementInfo",
     "RawData",
-    "RawMeasurement",
-    "RawMetadata",
-    "Results",
-    "ResultsInfo",
+    "RawDataInfo",
+    "AnalysisResult",
+    "AnalysisResultInfo",
+    "NXFile",
+    "NXGroup",
+    "NXField",
+    "NXLink",
+    "EChemEntry",
+    "EChemEntries",
     "detect_technique",
     "get_file_info",
     "list_supported_formats",

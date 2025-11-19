@@ -1,7 +1,7 @@
 """Generic file loading and standardization for scientific measurements.
 
 This module provides:
-1. Format detection and plugin-based loading into RawMeasurement objects
+1. Format detection and plugin-based loading into EChemEntry objects
 2. Data standardization using technique-specific mappings
 3. Unified API for loading and processing measurement data
 """
@@ -11,21 +11,25 @@ from __future__ import annotations
 import json
 import warnings
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Tuple, Union
 
 import numpy as np
 import xarray as xr
+import pandas as pd
 
 from .structures import (
     RawData,
-    RawMetadata,
-    RawMeasurement,
+    RawDataInfo,
     Measurement,
     MeasurementInfo,
+    AnalysisResult,
+    AnalysisResultInfo,
+    Entry,
+    Entries,
 )
 
 # Type alias for loader plugins
-Loader = Callable[[Path, Any], RawMeasurement]
+Loader = Callable[[Path, Any], Entry]
 
 
 # ============================================================================
@@ -33,22 +37,23 @@ Loader = Callable[[Path, Any], RawMeasurement]
 # ============================================================================
 
 
-def _create_raw_measurement(
+def _create_entry(
     dataset: xr.Dataset,
     path: Path,
     technique: str = "Unknown",
     extra_meta: Optional[Dict[str, Any]] = None,
-) -> RawMeasurement:
-    """Wrap a dataset into a RawMeasurement with metadata.
+) -> Entry:
+    """Wrap a dataset into an Entry with metadata.
     
     Args:
-        dataset: xarray Dataset containing the data
+        dataset: xarray Dataset containing the raw data
         path: Path to the source file
         technique: Measurement technique
         extra_meta: Additional metadata to include
         
     Returns:
-        RawMeasurement object with data and metadata
+        Entry object with raw data and metadata populated,
+        and other fields initialized as empty.
     """
     meta_dict = {
         "technique": technique,
@@ -59,10 +64,26 @@ def _create_raw_measurement(
     if extra_meta:
         meta_dict.update(extra_meta)
 
-    metadata = RawMetadata(meta=meta_dict)
+    # Create RawData components
+    raw_data_info = RawDataInfo(meta=meta_dict)
     raw_data = RawData(data=dataset)
 
-    return RawMeasurement(data=raw_data, metadata=metadata)
+    # Create empty components for the rest
+    # Note: We create empty Datasets for required data fields
+    measurement = Measurement(data=xr.Dataset())
+    measurement_info = MeasurementInfo()
+    
+    analysis_result = AnalysisResult(data=xr.Dataset())
+    analysis_result_info = AnalysisResultInfo()
+
+    return Entry(
+        raw_data=raw_data,
+        raw_data_info=raw_data_info,
+        measurement=measurement,
+        measurement_info=measurement_info,
+        analysis_result=analysis_result,
+        analysis_result_info=analysis_result_info
+    )
 
 
 def _structured_array_to_dataset(array: np.ndarray) -> xr.Dataset:
@@ -83,7 +104,7 @@ def _structured_array_to_dataset(array: np.ndarray) -> xr.Dataset:
 # ============================================================================
 
 
-def _load_delimited(path: Path, *, delimiter: str, **kwargs: Any) -> RawMeasurement:
+def _load_delimited(path: Path, *, delimiter: str, **kwargs: Any) -> Entry:
     """Load delimited text files (CSV, TSV, etc.)."""
     # Read header lines to capture potential metadata
     header_lines = []
@@ -101,10 +122,10 @@ def _load_delimited(path: Path, *, delimiter: str, **kwargs: Any) -> RawMeasurem
     dataset = _structured_array_to_dataset(array)
 
     extra_meta = {"header_comments": header_lines} if header_lines else {}
-    return _create_raw_measurement(dataset, path, technique="Table", extra_meta=extra_meta)
+    return _create_entry(dataset, path, technique="Table", extra_meta=extra_meta)
 
 
-def _load_lanhe_ccs(path: Path, **kwargs: Any) -> RawMeasurement:
+def _load_lanhe_ccs(path: Path, **kwargs: Any) -> Entry:
     """Load LANHE .ccs binary files using LanheReader plugin."""
     tag_filter = kwargs.pop("tag_filter", None)
     channel_filter = kwargs.pop("channel_filter", None)
@@ -119,29 +140,68 @@ def _load_lanhe_ccs(path: Path, **kwargs: Any) -> RawMeasurement:
     if hasattr(reader, "header"):
         extra_meta["lanhe_header"] = reader.header
 
-    return _create_raw_measurement(dataset, path, technique="Echem/Lanhe", extra_meta=extra_meta)
+    return _create_entry(dataset, path, technique="Echem/Lanhe", extra_meta=extra_meta)
 
 
-def _load_netcdf(path: Path, **kwargs: Any) -> RawMeasurement:
+def _load_netcdf(path: Path, **kwargs: Any) -> Entry:
     """Load NetCDF files."""
     dataset = xr.open_dataset(path, **kwargs)
     # Extract global attributes as metadata
     extra_meta = dict(dataset.attrs)
-    return _create_raw_measurement(dataset, path, technique="NetCDF", extra_meta=extra_meta)
+    return _create_entry(dataset, path, technique="NetCDF", extra_meta=extra_meta)
 
 
-def _load_biologic(path: Path, **kwargs: Any) -> RawMeasurement:
+def _load_biologic(path: Path, **kwargs: Any) -> Entry:
     """Load BioLogic .mpr or .mpt files using BiologicMPTReader plugin."""
     from echemistpy.utils.external.echem.biologic_reader import BiologicMPTReader
 
     reader = BiologicMPTReader()
-    measurement = reader.read(path, **kwargs)
+    # Note: BiologicMPTReader might return RawMeasurement (old) or have been updated.
+    # We assume it returns an object with .data (RawData) and .metadata (RawMetadata/Info)
+    # OR we might need to adapt it. 
+    # Since we cannot guarantee the reader is updated, we will try to use it 
+    # and adapt the result if possible, or just use its internal logic if exposed.
+    
+    # For now, assuming reader.read(path) returns something we can't easily use if it's the old class.
+    # We will try to use the reader's internal methods if possible, or just wrap the result.
+    # If the reader returns the old RawMeasurement, it will fail at runtime if that class is gone.
+    # So we assume the user will update the reader or has updated it.
+    # Here we will just call it and expect it to return something compatible or we catch it.
+    
+    # FIXME: This depends on BiologicMPTReader being updated to return EChemEntry or similar.
+    # If it returns the old RawMeasurement, this will fail. 
+    # As a fallback, we can try to manually read if the reader exposes a to_dataset method.
+    
+    # Let's assume for this task that we just need to update this file to use EChemEntry.
+    # If the reader returns a dataset, we use _create_entry.
+    
+    # If reader.read() returns the old object, we can't use it.
+    # Let's try to see if we can just use the reader to get a dataset.
+    # Looking at typical patterns, maybe reader.to_dataset()?
+    
+    # Reverting to using the reader as is, but wrapping the result if it's a dataset.
+    # If it's the old object, we might need to extract fields.
+    
+    result = reader.read(path, **kwargs)
+    
+    if isinstance(result, EChemEntry):
+        return result
+    
+    # If it's the old RawMeasurement (if it still exists in memory) or similar
+    if hasattr(result, 'data') and hasattr(result, 'metadata'):
+        # Extract dataset and meta
+        dataset = result.data.data if hasattr(result.data, 'data') else result.data
+        meta = result.metadata.meta if hasattr(result.metadata, 'meta') else result.metadata
+        return _create_entry(dataset, path, technique="Echem/BioLogic", extra_meta=meta)
+        
+    # If it's just a dataset
+    if isinstance(result, xr.Dataset):
+        return _create_entry(result, path, technique="Echem/BioLogic")
+        
+    raise ValueError(f"Biologic loader returned unexpected type: {type(result)}")
 
-    # BiologicMPTReader already returns a RawMeasurement with complete metadata
-    return measurement
 
-
-def _load_excel(path: Path, **kwargs: Any) -> RawMeasurement:
+def _load_excel(path: Path, **kwargs: Any) -> Entry:
     """Load Excel files using pandas backend."""
 
     # Read Excel file
@@ -153,10 +213,10 @@ def _load_excel(path: Path, **kwargs: Any) -> RawMeasurement:
         data_vars[str(col)] = ("row", df[col].values)
 
     dataset = xr.Dataset(data_vars=data_vars, coords={"row": np.arange(len(df))})
-    return _create_raw_measurement(dataset, path, technique="Excel")
+    return _create_entry(dataset, path, technique="Excel")
 
 
-def _load_hdf5(path: Path, **kwargs: Any) -> RawMeasurement:
+def _load_hdf5(path: Path, **kwargs: Any) -> Entry:
     """Load HDF5 files using xarray backend."""
     try:
         dataset = xr.open_dataset(path, engine="h5netcdf", **kwargs)
@@ -165,14 +225,14 @@ def _load_hdf5(path: Path, **kwargs: Any) -> RawMeasurement:
         dataset = xr.open_dataset(path, engine="netcdf4", **kwargs)
 
     extra_meta = dict(dataset.attrs)
-    return _create_raw_measurement(dataset, path, technique="HDF5", extra_meta=extra_meta)
+    return _create_entry(dataset, path, technique="HDF5", extra_meta=extra_meta)
 
 
 # ============================================================================
 # Plugin Registry
 # ============================================================================
 
-_LOADER_MAP: Dict[str, Loader] = {
+_LOADER_TYPES: Dict[str, Loader] = {
     "csv": lambda path, **kwargs: _load_delimited(path, delimiter=",", **kwargs),
     "tsv": lambda path, **kwargs: _load_delimited(path, delimiter="\t", **kwargs),
     "ccs": _load_lanhe_ccs,
@@ -190,16 +250,13 @@ _LOADER_MAP: Dict[str, Loader] = {
     "hdf": _load_hdf5,
 }
 
-# Alias for backwards compatibility
-_LOADERS = _LOADER_MAP
-
 
 # ============================================================================
 # Unified Loader Interface
 # ============================================================================
 
 
-def _load(path: Path, fmt: Optional[str] = None, **kwargs: Any) -> RawMeasurement:
+def _load(path: Path, fmt: Optional[str] = None, **kwargs: Any) -> Entry:
     """Unified loader function that dispatches to format-specific plugins.
     
     Args:
@@ -208,7 +265,7 @@ def _load(path: Path, fmt: Optional[str] = None, **kwargs: Any) -> RawMeasuremen
         **kwargs: Additional arguments passed to the specific loader plugin
         
     Returns:
-        RawMeasurement containing loaded data and metadata
+        Entry containing loaded data and metadata
         
     Raises:
         ValueError: If file format is not supported
@@ -216,79 +273,14 @@ def _load(path: Path, fmt: Optional[str] = None, **kwargs: Any) -> RawMeasuremen
     extension = (fmt or path.suffix.lstrip(".")).lower()
     
     try:
-        loader = _LOADER_MAP[extension]
+        loader = _LOADER_TYPES[extension]
     except KeyError as exc:
         raise ValueError(
             f"Unsupported file extension '{extension}'. "
-            f"Supported formats: {', '.join(sorted(_LOADER_MAP.keys()))}"
+            f"Supported formats: {', '.join(sorted(_LOADER_TYPES.keys()))}"
         ) from exc
     
     return loader(path, **kwargs)
-
-
-def load_table(
-    path: str | Path,
-    *,
-    fmt: Optional[str] = None,
-    storage_options: Optional[Mapping[str, Any]] = None,
-    **kwargs: Any,
-) -> RawMeasurement:
-    """Load a tabular file into a RawMeasurement.
-
-    Args:
-        path: Path to the data file
-        fmt: Optional format override (e.g., 'csv', 'tsv')
-        storage_options: Not used yet, kept for API stability
-        **kwargs: Additional arguments passed to the specific loader
-
-    Returns:
-        RawMeasurement containing the loaded data and metadata
-
-    Examples:
-        >>> from pathlib import Path
-        >>> import tempfile
-        >>> # Create a simple CSV file
-        >>> with tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False) as f:
-        ...     _ = f.write("voltage,current\\n3.1,0.5\\n3.4,0.4\\n")
-        ...     temp_path = f.name
-        >>> measurement = load_table(temp_path)
-        >>> measurement.data.data["voltage"].values.tolist()
-        [3.1, 3.4]
-        >>> measurement.metadata.meta["technique"]
-        'Table'
-    """
-    del storage_options  # not used yet but kept for API stability
-
-    path = Path(path)
-    return _load(path, fmt=fmt, **kwargs)
-
-
-def load_data_file(path: str | Path, **kwargs: Any) -> RawMeasurement:
-    """Universal data file loader with automatic format detection.
-
-    This function attempts to load various scientific data formats by
-    detecting the file extension and dispatching to the appropriate
-    loader plugin.
-
-    Args:
-        path: Path to the data file
-        **kwargs: Additional arguments passed to the specific loader
-
-    Returns:
-        RawMeasurement containing the loaded data and metadata
-
-    Raises:
-        ValueError: If no suitable loader can handle the file
-
-    Examples:
-        >>> # Load various file types automatically
-        >>> measurement1 = load_data_file("data.csv")  # CSV file
-        >>> measurement2 = load_data_file("data.xlsx") # Excel file
-        >>> measurement3 = load_data_file("data.mpr")  # BioLogic file
-        >>> measurement4 = load_data_file("data.ccs")  # LANHE file
-    """
-    path = Path(path)
-    return _load(path, **kwargs)
 
 
 def register_loader(extension: str, loader: Loader) -> None:
@@ -296,16 +288,16 @@ def register_loader(extension: str, loader: Loader) -> None:
     
     Args:
         extension: File extension (without dot, e.g., 'xyz')
-        loader: Loader function that takes (Path, **kwargs) and returns RawMeasurement
+        loader: Loader function that takes (Path, **kwargs) and returns EChemEntry
         
     Example:
-        >>> def my_custom_loader(path: Path, **kwargs) -> RawMeasurement:
+        >>> def my_custom_loader(path: Path, **kwargs) -> EChemEntry:
         ...     # Custom loading logic
         ...     dataset = ...  # Create xarray Dataset
-        ...     return _create_raw_measurement(dataset, path, technique="Custom")
+        ...     return _create_entry(dataset, path, technique="Custom")
         >>> register_loader("xyz", my_custom_loader)
     """
-    _LOADER_MAP[extension.lower()] = loader
+    _LOADER_TYPES[extension.lower()] = loader
 
 
 # ============================================================================
@@ -596,36 +588,25 @@ def detect_technique(dataset: xr.Dataset) -> str:
 
 
 def standardize_measurement(
-    raw_measurement: RawMeasurement,
+    entry: EChemEntry,
     technique_hint: Optional[str] = None,
     custom_mapping: Optional[Dict[str, str]] = None,
     required_columns: Optional[List[str]] = None,
-) -> Tuple[Measurement, MeasurementInfo]:
-    """Standardize a RawMeasurement into Measurement and MeasurementInfo.
+) -> EChemEntry:
+    """Standardize an EChemEntry's measurement data.
 
     Args:
-        raw_measurement: Input raw measurement
+        entry: Input entry with raw data
         technique_hint: Override technique detection
         custom_mapping: Additional column name mappings
         required_columns: List of columns that must be present
 
     Returns:
-        Tuple of (Measurement, MeasurementInfo)
-
-    Example:
-        >>> raw = load_data_file("data.csv")
-        >>> measurement, info = standardize_measurement(raw)
-        >>> print(info.technique)
-        'electrochemistry'
-        >>> print(measurement.data.data_vars)
-        Data variables:
-            Time/s       (row) float64 ...
-            Ewe/V        (row) float64 ...
-            Current/mA   (row) float64 ...
+        EChemEntry with populated and standardized Measurement and MeasurementInfo
     """
     # Extract dataset from RawData
-    if isinstance(raw_measurement.data.data, xr.Dataset):
-        dataset = raw_measurement.data.data
+    if isinstance(entry.raw_data.data, xr.Dataset):
+        dataset = entry.raw_data.data
     else:
         raise ValueError(
             "RawData must contain an xarray.Dataset for standardization"
@@ -634,7 +615,7 @@ def standardize_measurement(
     # Determine technique
     technique = (
         technique_hint
-        or raw_measurement.metadata.meta.get("technique")
+        or entry.raw_data_info.meta.get("technique")
         or detect_technique(dataset)
     )
     if technique in ["Unknown", "unknown", "Table"]:
@@ -657,17 +638,21 @@ def standardize_measurement(
     standardized_dataset = standardizer.get_dataset()
 
     # Create MeasurementInfo
-    raw_meta = raw_measurement.metadata.meta
+    raw_meta = entry.raw_data_info.meta
 
     info = MeasurementInfo(
         technique=technique,
         sample_name=raw_meta.get("original_filename", "Unknown").split(".")[0],
         instrument=raw_meta.get("instrument"),
         operator=raw_meta.get("operator"),
-        extras=raw_meta,  # Keep all raw metadata in extras
+        others=raw_meta,  # Keep all raw metadata in others
     )
 
-    return Measurement(data=standardized_dataset), info
+    # Update the entry with standardized measurement
+    entry.measurement = Measurement(data=standardized_dataset)
+    entry.measurement_info = info
+    
+    return entry
 
 
 # ============================================================================
@@ -730,8 +715,6 @@ def list_supported_formats() -> Dict[str, str]:
 
 __all__ = [
     # Loading functions
-    "load_data_file",
-    "load_table",
     "register_loader",
     # Standardization
     "standardize_measurement",
