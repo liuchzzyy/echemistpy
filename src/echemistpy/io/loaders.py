@@ -143,10 +143,6 @@ def _load_biologic(path: Path, **kwargs: Any) -> RawMeasurement:
 
 def _load_excel(path: Path, **kwargs: Any) -> RawMeasurement:
     """Load Excel files using pandas backend."""
-    try:
-        import pandas as pd
-    except ImportError as exc:
-        raise ImportError("pandas is required to read Excel files") from exc
 
     # Read Excel file
     df = pd.read_excel(path, **kwargs)
