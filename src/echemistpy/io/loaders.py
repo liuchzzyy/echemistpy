@@ -8,7 +8,6 @@ This module provides:
 
 from __future__ import annotations
 
-import json
 import warnings
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Tuple, Union
@@ -57,8 +56,7 @@ def _create_entry(
     """
     meta_dict = {
         "technique": technique,
-        "source_file": str(path),
-        "original_filename": path.name,
+        "filename": path.stem,
         "extension": path.suffix,
     }
     if extra_meta:
@@ -105,7 +103,7 @@ def _structured_array_to_dataset(array: np.ndarray) -> xr.Dataset:
 
 
 def _load_delimited(path: Path, *, delimiter: str, **kwargs: Any) -> Entry:
-    """Load delimited text files (CSV, TSV, etc.)."""
+    """Load delimited text files (CSV, txt, etc.)."""
     # Read header lines to capture potential metadata
     header_lines = []
     with open(path, "r", errors="ignore") as f:
@@ -141,14 +139,6 @@ def _load_lanhe_ccs(path: Path, **kwargs: Any) -> Entry:
         extra_meta["lanhe_header"] = reader.header
 
     return _create_entry(dataset, path, technique="Echem/Lanhe", extra_meta=extra_meta)
-
-
-def _load_netcdf(path: Path, **kwargs: Any) -> Entry:
-    """Load NetCDF files."""
-    dataset = xr.open_dataset(path, **kwargs)
-    # Extract global attributes as metadata
-    extra_meta = dict(dataset.attrs)
-    return _create_entry(dataset, path, technique="NetCDF", extra_meta=extra_meta)
 
 
 def _load_biologic(path: Path, **kwargs: Any) -> Entry:
@@ -234,17 +224,12 @@ def _load_hdf5(path: Path, **kwargs: Any) -> Entry:
 
 _LOADER_TYPES: Dict[str, Loader] = {
     "csv": lambda path, **kwargs: _load_delimited(path, delimiter=",", **kwargs),
-    "tsv": lambda path, **kwargs: _load_delimited(path, delimiter="\t", **kwargs),
+    "txt": lambda path, **kwargs: _load_delimited(path, delimiter="\t", **kwargs),
     "ccs": _load_lanhe_ccs,
-    "nc": _load_netcdf,
-    "nc4": _load_netcdf,
-    "netcdf": _load_netcdf,
     "mpr": _load_biologic,
     "mpt": _load_biologic,
     "xlsx": _load_excel,
     "xls": _load_excel,
-    "xlsm": _load_excel,
-    "xlsb": _load_excel,
     "h5": _load_hdf5,
     "hdf5": _load_hdf5,
     "hdf": _load_hdf5,
@@ -726,3 +711,7 @@ __all__ = [
     # Type alias
     "Loader",
 ]
+
+# Public aliases
+load_data_file = _load
+load_table = _load

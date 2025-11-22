@@ -1,5 +1,5 @@
-#!/usr/bin/env python3
-"""Utilities for parsing LANHE *.ccs electrochemistry files.
+# -*- coding: utf-8 -*-
+"""Code to read in data files from LANHE instruments
 
 This module was created by reverse engineering the example file found in
 ``examples/echem/LANHE_GPCL.ccs``.  The format is a proprietary binary layout
@@ -39,6 +39,26 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+import xarray as xr
+
+from echemistpy.io.structures import RawData, RawDataInfo
+
+# ----------------------------------------------------------------------
+# Public API
+# ----------------------------------------------------------------------
+
+__all__ = [
+    "LanheReader",
+    "LanheReadError",
+    "_LanheParser",
+    "SampleRecord",
+]
+
+# ----------------------------------------------------------------------
+# Constants
+# ----------------------------------------------------------------------
+
 BLOCK_SIZE = 128
 HEADER_SIZE = 0x1000
 SAMPLES_PER_BLOCK = 6
@@ -50,6 +70,10 @@ TAG_NAMES = {
     0x0002: "section_terminator",
 }
 
+
+# ----------------------------------------------------------------------
+# Data Structures
+# ----------------------------------------------------------------------
 
 @dataclass
 class SampleRecord:
@@ -67,14 +91,26 @@ class SampleRecord:
         return TAG_NAMES.get(self.tag, f"unknown_{self.tag:#06x}")
 
 
-class LanheReader:
-    """Parser for LANHE ``*.ccs`` files."""
+# ----------------------------------------------------------------------
+# Exceptions
+# ----------------------------------------------------------------------
+
+class LanheReadError(Exception):
+    """Raised when a LANHE file cannot be parsed."""
+
+
+# ----------------------------------------------------------------------
+# Internal Parser Class
+# ----------------------------------------------------------------------
+
+class _LanheParser:
+    """Internal parser for LANHE ``*.ccs`` files."""
 
     def __init__(self, path: Path | str) -> None:
         self.path = Path(path)
         self._data = self.path.read_bytes()
         if len(self._data) < HEADER_SIZE:
-            raise ValueError("File is too small to contain the LANHE header")
+            raise LanheReadError("File is too small to contain the LANHE header")
 
         self.metadata = self._parse_metadata()
         self.block_counts = self._summarize_blocks()
@@ -266,7 +302,7 @@ class LanheReader:
         *,
         tag_filter: int | None = None,
         channel_filter: int | None = None,
-    ) -> "xr.Dataset":
+    ) -> xr.Dataset:
         """Convert decoded samples into an :class:`xarray.Dataset`.
 
         The resulting dataset exposes every decoded sample as a row along the
@@ -284,14 +320,6 @@ class LanheReader:
         channel_filter:
             If provided, restricts samples to a particular channel.
         """
-
-        try:
-            import numpy as np
-            import xarray as xr
-        except ImportError as exc:  # pragma: no cover - exercised indirectly
-            raise ImportError(
-                "LanheReader.to_dataset requires numpy and xarray to be installed.",
-            ) from exc
 
         records = list(self.iter_samples(tag_filter=tag_filter, channel_filter=channel_filter))
         if not records:
@@ -325,6 +353,50 @@ class LanheReader:
             },
         )
         return dataset
+
+
+# ----------------------------------------------------------------------
+# LanheReader - Main API Class
+# ----------------------------------------------------------------------
+
+class LanheReader:
+    """Reader for LANHE .ccs files."""
+
+    def __init__(self, path_to_file: str | Path | None = None) -> None:
+        self.path_to_file = Path(path_to_file) if path_to_file else None
+
+    def read(self) -> tuple[RawData, RawDataInfo]:
+        """Read the file and return RawData and RawDataInfo."""
+        if self.path_to_file is None:
+            raise LanheReadError("No file path provided for LANHE reader.")
+
+        if not self.path_to_file.exists():
+            raise LanheReadError(f"File not found: {self.path_to_file}")
+
+        suffix = self.path_to_file.suffix.lower()
+        if suffix != ".ccs":
+            raise LanheReadError(
+                "Only LANHE .ccs files are supported by this reader.",
+            )
+
+        return self._read_ccs()
+
+    def _read_ccs(self) -> tuple[RawData, RawDataInfo]:
+        """Read a LANHE .ccs file."""
+        try:
+            parser = _LanheParser(self.path_to_file)
+        except Exception as exc:
+            raise LanheReadError(f"Failed to parse CCS file: {exc}") from exc
+
+        # Convert to xarray Dataset using primary data tag (0x0603)
+        dataset = parser.to_dataset(tag_filter=0x0603)
+
+        # Prepare metadata
+        meta = dict(parser.metadata)
+        meta["block_counts"] = dict(parser.block_counts)
+        meta["file_path"] = str(self.path_to_file)
+
+        return RawData(data=dataset), RawDataInfo(meta=meta)
 
 
 # ----------------------------------------------------------------------
@@ -402,7 +474,7 @@ def format_block_summary(counts: Counter[tuple[int, int]]) -> str:
     return "\n".join(lines)
 
 
-def preview_samples(reader: LanheReader, limit: int = 5) -> str:
+def preview_samples(reader: _LanheParser, limit: int = 5) -> str:
     """Format the first few decoded samples (default five) for display."""
     rows: list[str] = []
     for idx, record in enumerate(reader.iter_samples(tag_filter=0x0603)):
@@ -436,7 +508,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     )
     args = parser.parse_args(argv)
 
-    reader = LanheReader(args.file)
+    reader = _LanheParser(args.file)
     print("\n=== Metadata ===")
     print(format_metadata(reader.metadata))
     print("\n=== Block summary ===")

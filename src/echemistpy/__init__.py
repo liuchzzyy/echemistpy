@@ -8,8 +8,8 @@ notebook users as well as more structured applications.
 from .io import (
     Measurement, 
     MeasurementInfo, 
-    Results, 
-    ResultsInfo, 
+    AnalysisResult, 
+    AnalysisResultInfo, 
     load_data_file, 
     save_measurement, 
     save_results
@@ -20,8 +20,8 @@ __all__ = [
     # "AnalysisPipeline",
     "Measurement",
     "MeasurementInfo",
-    "Results",
-    "ResultsInfo",
+    "AnalysisResult",
+    "AnalysisResultInfo",
     "load_data_file",
     "save_measurement",
     "save_results",

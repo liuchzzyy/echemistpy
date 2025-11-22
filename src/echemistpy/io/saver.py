@@ -10,7 +10,7 @@ from typing import Any, Dict, Optional, Sequence, Union
 import numpy as np
 import xarray as xr
 
-from echemistpy.io.structures import Measurement, MeasurementInfo, Results, ResultsInfo
+from echemistpy.io.structures import Measurement, MeasurementInfo, AnalysisResult, AnalysisResultInfo
 
 _TEXT_FORMATS = {"csv": ","}
 _NETCDF_FORMATS = {"nc", "nc4", "netcdf", "h5", "hdf5", "hdf"}
@@ -164,8 +164,8 @@ def save_measurement(
 
 
 def save_results(
-    results: Results,
-    results_info: ResultsInfo,
+    results: AnalysisResult,
+    results_info: AnalysisResultInfo,
     path: str | Path,
     measurement: Optional[Measurement] = None,
     measurement_info: Optional[MeasurementInfo] = None,

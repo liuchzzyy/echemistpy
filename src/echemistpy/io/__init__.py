@@ -21,9 +21,11 @@ from .structures import (
     NXFile,
     NXGroup,
     NXField,
-    NXLink
+    NXLink,
+    Entry as EChemEntry,
+    Entries as EChemEntries,
 )
-from .model import EChemEntry, EChemEntries
+# from .model import EChemEntry, EChemEntries
 
 __all__ = [
     "DataStandardizer",
