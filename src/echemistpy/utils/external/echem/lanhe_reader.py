@@ -1,366 +1,21 @@
 # -*- coding: utf-8 -*-
-"""Code to read in data files from LANHE instruments
+"""Code to read in data files from Lanhe instruments"""
 
-This module was created by reverse engineering the example file found in
-``examples/echem/LANHE_GPCL.ccs``.  The format is a proprietary binary layout
-used by LANHE battery cyclers.  We do not have an official specification, so
-this reader relies on observations of the example file:
-
-* The file begins with a ~4 kB header that stores metadata as fixed-length
-  zero-terminated ASCII strings along with several numeric calibration values.
-* The remainder of the file is composed of fixed-size 128 byte blocks.  Each
-  block starts with two 32-bit integers (``tag`` and ``channel_id``) followed by
-  six 20-byte sample groups.  Every sample group stores a time delta (in
-  milliseconds) and four little-endian ``float32`` readings.
-* The ``tag`` value identifies the semantic meaning of the samples.  In the
-  example file the following tags were observed:
-
-  ``0x0603`` (1539)
-      Primary time-series samples (voltage + other channels).
-  ``0x0103`` (259) and ``0x0203`` (515)
-      Short configuration/sample blocks that appear at section boundaries.
-  ``0x0002``
-      Marks the end of a channel/section.  Sample payloads in these blocks are
-      empty and are ignored by this parser.
-
-The parser below extracts the metadata, counts block types, and reconstructs the
-primary data stream (``tag == 0x0603``).  The remaining block types are
-preserved so that callers can inspect them if needed.
-"""
-
-from __future__ import annotations
-
-import argparse
-import csv
-import struct
-from collections import Counter, defaultdict
-from collections.abc import Iterator, Sequence
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import numpy as np
+import pandas as pd
 import xarray as xr
 
 from echemistpy.io.structures import RawData, RawDataInfo
 
-# ----------------------------------------------------------------------
-# Public API
-# ----------------------------------------------------------------------
-
-__all__ = [
-    "LanheReader",
-    "LanheReadError",
-    "_LanheParser",
-    "SampleRecord",
-]
-
-# ----------------------------------------------------------------------
-# Constants
-# ----------------------------------------------------------------------
-
-BLOCK_SIZE = 128
-HEADER_SIZE = 0x1000
-SAMPLES_PER_BLOCK = 6
-SAMPLE_STRUCT = struct.Struct("<Iffff")
-TAG_NAMES = {
-    0x0603: "data_points",
-    0x0103: "segment_config_a",
-    0x0203: "segment_config_b",
-    0x0002: "section_terminator",
-}
-
-
-# ----------------------------------------------------------------------
-# Data Structures
-# ----------------------------------------------------------------------
-
-@dataclass
-class SampleRecord:
-    """Represents a decoded sample from a LANHE data block."""
-
-    block_index: int
-    tag: int
-    channel_id: int
-    delta_ms: int
-    elapsed_s: float
-    values: Sequence[float]
-
-    @property
-    def tag_name(self) -> str:
-        return TAG_NAMES.get(self.tag, f"unknown_{self.tag:#06x}")
-
-
-# ----------------------------------------------------------------------
-# Exceptions
-# ----------------------------------------------------------------------
-
 class LanheReadError(Exception):
-    """Raised when a LANHE file cannot be parsed."""
+    """Raised when a Lanhe file cannot be parsed."""
 
-
-# ----------------------------------------------------------------------
-# Internal Parser Class
-# ----------------------------------------------------------------------
-
-class _LanheParser:
-    """Internal parser for LANHE ``*.ccs`` files."""
-
-    def __init__(self, path: Path | str) -> None:
-        self.path = Path(path)
-        self._data = self.path.read_bytes()
-        if len(self._data) < HEADER_SIZE:
-            raise LanheReadError("File is too small to contain the LANHE header")
-
-        self.metadata = self._parse_metadata()
-        self.block_counts = self._summarize_blocks()
-        self.samples = list(self._decode_samples())
-
-    # ------------------------------------------------------------------
-    # Metadata helpers
-    # ------------------------------------------------------------------
-    def _read_string(self, offset: int, length: int) -> str:
-        raw = self._data[offset : offset + length]
-        raw = raw.split(b"\x00", 1)[0]
-        return raw.decode("utf-8", errors="ignore").strip()
-
-    def _parse_metadata(self) -> dict[str, str | list[dict[str, str]]]:
-        """Extract human readable metadata from the fixed header."""
-
-        def field(key: str, offset: int, length: int) -> str:
-            return self._read_string(offset, length)
-
-        meta: dict[str, str | list[dict[str, str]]] = {
-            "group_name": field("group_name", 0x10, 0x40),
-            "computer": field("computer", 0x58, 0x20),
-            "project_guid": field("project_guid", 0x78, 0x40),
-            "test_name": field("test_name", 0xB0, 0x40),
-            "start_date": field("start_date", 0xF0, 0x20),
-            "column_signature": field("column_signature", 0x1F0, 0x80),
-            "software_version": field("software_version", 0x2D0, 0x20),
-            "equipment_id": field("equipment_id", 0x360, 0x20),
-            "connection": field("connection", 0x444, 0x20),
-            "firmware_version": field("firmware_version", 0x464, 0x10),
-            "controller_version": field("controller_version", 0x474, 0x10),
-            "hardware_date": field("hardware_date", 0x484, 0x10),
-            "manufacturer": field("manufacturer", 0x494, 0x20),
-            "calibration_date": field("calibration_date", 0x4D4, 0x10),
-            "serial_number": field("serial_number", 0x4E4, 0x20),
-            "program_guid": field("program_guid", 0x704, 0x30),
-            "program_name": field("program_name", 0x734, 0x40),
-            "program_description": field("program_description", 0x774, 0x40),
-        }
-
-        meta["operator_log"] = self._parse_operator_log()
-        return meta
-
-    def _parse_operator_log(self) -> list[dict[str, str]]:
-        """Best-effort decoding of the operator/timestamp entries in the header."""
-
-        log_entries: list[dict[str, str]] = []
-        entry_start = 0x504
-        entry_size = 0x40
-        end = 0x700
-
-        while entry_start + 0x20 <= end:
-            chunk = self._data[entry_start : entry_start + 0x20]
-            if not chunk.strip(b"\x00"):
-                break
-
-            parts = chunk.split(b"\x00", 1)
-            user_bytes = parts[0]
-            remainder = parts[1] if len(parts) > 1 else b""
-            user = user_bytes.decode("utf-8", errors="ignore").strip()
-
-            remainder = remainder.lstrip(b"\x00")
-            timestamp = remainder.split(b"\x00", 1)[0].decode(
-                "utf-8", errors="ignore",
-            ).strip()
-
-            log_entries.append({"user": user, "timestamp": timestamp})
-            entry_start += entry_size
-
-        return log_entries
-
-    # ------------------------------------------------------------------
-    # Block/sample decoding
-    # ------------------------------------------------------------------
-    def _summarize_blocks(self) -> Counter[tuple[int, int]]:
-        counts: Counter[tuple[int, int]] = Counter()
-        for block_index, offset in self._block_offsets():
-            tag, channel = struct.unpack_from("<II", self._data, offset)
-            counts[tag, channel] += 1
-        return counts
-
-    def _block_offsets(self) -> Iterator[tuple[int, int]]:
-        payload = self._data[HEADER_SIZE:]
-        block_count = len(payload) // BLOCK_SIZE
-        base = HEADER_SIZE
-        for block_index in range(block_count):
-            yield block_index, base + block_index * BLOCK_SIZE
-
-    def _decode_samples(self) -> Iterator[SampleRecord]:
-        # Use nested dict to avoid tuple key creation overhead
-        channel_elapsed: dict[int, dict[int, int]] = defaultdict(lambda: defaultdict(int))
-
-        for block_index, offset in self._block_offsets():
-            tag, channel = struct.unpack_from("<II", self._data, offset)
-            if tag == 0x0002:
-                # Terminator blocks do not carry sample payloads.
-                continue
-
-            block_payload_offset = offset + 8
-            for sample_idx in range(SAMPLES_PER_BLOCK):
-                base = block_payload_offset + sample_idx * SAMPLE_STRUCT.size
-                dt, v1, v2, v3, v4 = SAMPLE_STRUCT.unpack_from(self._data, base)
-                if dt == 0 and v1 == 0 and v2 == 0 and v3 == 0 and v4 == 0:
-                    continue
-                channel_elapsed[tag][channel] += dt
-                elapsed_s = channel_elapsed[tag][channel] / 1000.0
-                yield SampleRecord(
-                    block_index=block_index,
-                    tag=tag,
-                    channel_id=channel,
-                    delta_ms=dt,
-                    elapsed_s=elapsed_s,
-                    values=(v1, v2, v3, v4),
-                )
-
-    # ------------------------------------------------------------------
-    # Public helpers
-    # ------------------------------------------------------------------
-    def iter_samples(
-        self, tag_filter: int | None = None, channel_filter: int | None = None,
-    ) -> Iterator[SampleRecord]:
-        """Yield decoded :class:`SampleRecord` objects that match the filters.
-
-        Parameters
-        ----------
-        tag_filter:
-            If provided, only records whose ``tag`` matches this value are
-            returned.
-        channel_filter:
-            If provided, restricts the stream to the specified ``channel_id``.
-
-        Notes
-        -----
-        The method operates on the cached ``samples`` list built during
-        initialization, so iterating multiple times does not require re-parsing
-        the binary payload.  This makes it cheap to pull different tag/channel
-        subsets for downstream analysis or previews.
-        """
-        for record in self.samples:
-            if tag_filter is not None and record.tag != tag_filter:
-                continue
-            if channel_filter is not None and record.channel_id != channel_filter:
-                continue
-            yield record
-
-    def export_csv(
-        self,
-        destination: Path | str,
-        tag_filter: int | None = 0x0603,
-        channel_filter: int | None = None,
-    ) -> None:
-        """Dump the decoded samples to a CSV file."""
-
-        dest_path = Path(destination)
-        fieldnames = [
-            "block_index",
-            "tag",
-            "tag_name",
-            "channel_id",
-            "delta_ms",
-            "elapsed_s",
-            "value1",
-            "value2",
-            "value3",
-            "value4",
-        ]
-        with dest_path.open("w", newline="", encoding="utf-8") as fh:
-            writer = csv.DictWriter(fh, fieldnames=fieldnames)
-            writer.writeheader()
-            for record in self.iter_samples(tag_filter=tag_filter, channel_filter=channel_filter):
-                v1, v2, v3, v4 = record.values
-                writer.writerow(
-                    {
-                        "block_index": record.block_index,
-                        "tag": record.tag,
-                        "tag_name": record.tag_name,
-                        "channel_id": record.channel_id,
-                        "delta_ms": record.delta_ms,
-                        "elapsed_s": f"{record.elapsed_s:.3f}",
-                        "value1": f"{v1:.9f}",
-                        "value2": f"{v2:.9f}",
-                        "value3": f"{v3:.9f}",
-                        "value4": f"{v4:.9f}",
-                    },
-                )
-
-    def to_dataset(
-        self,
-        *,
-        tag_filter: int | None = None,
-        channel_filter: int | None = None,
-    ) -> xr.Dataset:
-        """Convert decoded samples into an :class:`xarray.Dataset`.
-
-        The resulting dataset exposes every decoded sample as a row along the
-        ``sample_index`` dimension.  Standard columns such as ``elapsed_s``,
-        ``delta_ms``, ``tag``, ``channel_id`` and the raw ``value1``-``value4``
-        streams are provided to make downstream analysis and visualization
-        simpler than working with the low-level :class:`SampleRecord` objects.
-
-        Parameters
-        ----------
-        tag_filter:
-            Optional block tag to filter on.  ``None`` (the default) keeps all
-            decoded tags so callers can inspect auxiliary segments in addition
-            to the primary 0x0603 data blocks.
-        channel_filter:
-            If provided, restricts samples to a particular channel.
-        """
-
-        records = list(self.iter_samples(tag_filter=tag_filter, channel_filter=channel_filter))
-        if not records:
-            return xr.Dataset()
-
-        sample_dim = np.arange(len(records), dtype=np.int64)
-        value_matrix = np.asarray([rec.values for rec in records], dtype=np.float32)
-
-        data_vars: dict[str, tuple[tuple[str, ...], Any]] = {
-            "block_index": (("sample_index",), np.fromiter((rec.block_index for rec in records), dtype=np.int64)),
-            "tag": (("sample_index",), np.fromiter((rec.tag for rec in records), dtype=np.int32)),
-            "channel_id": (("sample_index",), np.fromiter((rec.channel_id for rec in records), dtype=np.int32)),
-            "delta_ms": (("sample_index",), np.fromiter((rec.delta_ms for rec in records), dtype=np.int32)),
-            "elapsed_s": (("sample_index",), np.fromiter((rec.elapsed_s for rec in records), dtype=np.float64)),
-            "tag_name": (("sample_index",), np.asarray([rec.tag_name for rec in records], dtype=object)),
-        }
-
-        if value_matrix.size:
-            for idx in range(value_matrix.shape[1]):
-                data_vars[f"value{idx + 1}"] = (("sample_index",), value_matrix[:, idx])
-
-        dataset = xr.Dataset(data_vars=data_vars, coords={"sample_index": sample_dim})
-        dataset.attrs.update(
-            {
-                "lanhe_path": str(self.path),
-                "lanhe_metadata": self.metadata,
-                "lanhe_block_counts": {
-                    f"tag_{tag:#06x}_channel_{channel:#04x}": count
-                    for (tag, channel), count in self.block_counts.items()
-                },
-            },
-        )
-        return dataset
-
-
-# ----------------------------------------------------------------------
-# LanheReader - Main API Class
-# ----------------------------------------------------------------------
 
 class LanheReader:
-    """Reader for LANHE .ccs files."""
+    """Reader for Lanhe .xlsx files."""
 
     def __init__(self, path_to_file: str | Path | None = None) -> None:
         self.path_to_file = Path(path_to_file) if path_to_file else None
@@ -368,158 +23,174 @@ class LanheReader:
     def read(self) -> tuple[RawData, RawDataInfo]:
         """Read the file and return RawData and RawDataInfo."""
         if self.path_to_file is None:
-            raise LanheReadError("No file path provided for LANHE reader.")
+            raise LanheReadError("No file path provided for Lanhe reader.")
 
         if not self.path_to_file.exists():
             raise LanheReadError(f"File not found: {self.path_to_file}")
 
         suffix = self.path_to_file.suffix.lower()
-        if suffix != ".ccs":
+        if suffix == ".xlsx" or suffix == ".xls":
+            return self._read_excel()
+        else:
             raise LanheReadError(
-                "Only LANHE .ccs files are supported by this reader.",
+                "Only Lanhe .xlsx or .xls exports are supported by this reader.",
             )
 
-        return self._read_ccs()
-
-    def _read_ccs(self) -> tuple[RawData, RawDataInfo]:
-        """Read a LANHE .ccs file."""
+    def _read_excel(self) -> tuple[RawData, RawDataInfo]:
         try:
-            parser = _LanheParser(self.path_to_file)
+            # Read all sheets to handle multi-sheet structure
+            # User specified: Sheet 1 & 2 are metadata, Sheet 3 is data
+            # We use index 0, 1 for meta, 2 for data
+            # sheet_name=None returns a dict of {sheet_name: dataframe}
+            dfs = pd.read_excel(self.path_to_file, sheet_name=None, header=None)
+            sheet_names = list(dfs.keys())
         except Exception as exc:
-            raise LanheReadError(f"Failed to parse CCS file: {exc}") from exc
+            raise LanheReadError(f"Failed to parse Excel file: {exc}") from exc
 
-        # Convert to xarray Dataset using primary data tag (0x0603)
-        dataset = parser.to_dataset(tag_filter=0x0603)
+        if not dfs:
+            raise LanheReadError("Excel file is empty.")
 
-        # Prepare metadata
-        meta = dict(parser.metadata)
-        meta["block_counts"] = dict(parser.block_counts)
-        meta["file_path"] = str(self.path_to_file)
+        meta = {"filename": self.path_to_file.name}
+        df_data = None
+
+        # Logic to handle multi-sheet structure
+        if len(sheet_names) >= 3:
+            # Assume Sheet 0 and 1 are metadata
+            meta.update(self._parse_metadata(dfs[sheet_names[0]]))
+            meta.update(self._parse_metadata(dfs[sheet_names[1]]))
+            
+            # Assume Sheet 2 is data
+            df_raw_data = dfs[sheet_names[2]]
+        else:
+            # Fallback: If fewer than 3 sheets, assume the first sheet contains data
+            # and try to parse metadata from it as well (before header)
+            # This maintains backward compatibility with single-sheet files
+            df_raw_data = dfs[sheet_names[0]]
+            # We will parse metadata from this sheet up to the header row later
+
+        # Process Data Sheet
+        # Find the header row in the data sheet
+        header_row_idx = self._find_header_row(df_raw_data)
+        
+        if header_row_idx is None:
+             raise LanheReadError("Could not find a valid data header in the data sheet.")
+
+        # If we are in the fallback single-sheet mode, extract metadata from top rows
+        if len(sheet_names) < 3:
+             meta.update(self._parse_metadata(df_raw_data.iloc[:header_row_idx]))
+
+        # Extract data (rows after header)
+        df_data = df_raw_data.iloc[header_row_idx + 1:].copy()
+        df_data.columns = df_raw_data.iloc[header_row_idx].values
+        
+        # Deduplicate columns if necessary
+        df_data = self._deduplicate_columns(df_data)
+
+        # Reset index
+        df_data.reset_index(drop=True, inplace=True)
+        df_data.index.name = "row"
+
+        # Clean and standardize columns
+        df_data = self._standardize_columns(df_data)
+        
+        # Deduplicate columns again after standardization (in case multiple cols mapped to same name)
+        df_data = self._deduplicate_columns(df_data)
+        
+        # Convert to numeric, coercing errors to NaN
+        # Note: we iterate over a list of columns to avoid issues if duplicates still somehow exist (though they shouldn't)
+        for col in df_data.columns:
+            # If we still have duplicates, df_data[col] would be a DataFrame, so we check
+            if isinstance(df_data[col], pd.DataFrame):
+                 # This should be handled by _deduplicate_columns, but as a safety net:
+                 # We take the first one or handle it. 
+                 # But _deduplicate_columns should prevent this.
+                 pass
+            else:
+                df_data[col] = pd.to_numeric(df_data[col], errors='coerce')
+
+        dataset = xr.Dataset.from_dataframe(df_data)
 
         return RawData(data=dataset), RawDataInfo(meta=meta)
 
+    def _find_header_row(self, df: pd.DataFrame) -> int | None:
+        """Find the row index that contains data headers."""
+        # Common columns found in Lanhe files (Chinese or English)
+        # We look for a row that contains at least a few of these
+        candidates = [
+            "Test Time", "Voltage", "Current", "Capacity", "Energy",
+            "测试时间", "电压", "电流", "容量", "能量", "Step Time", "工步时间"
+        ]
+        
+        for idx, row in df.iterrows():
+            # Convert row values to string and check for intersection with candidates
+            row_values = [str(v).strip() for v in row.values if pd.notna(v)]
+            matches = [c for c in candidates if any(c in rv for rv in row_values)]
+            
+            # If we find at least 3 matches, we assume this is the header
+            if len(matches) >= 3:
+                return idx
+        return None
 
-# ----------------------------------------------------------------------
-# CLI
-# ----------------------------------------------------------------------
+    def _parse_metadata(self, df_meta: pd.DataFrame) -> dict[str, Any]:
+        """Parse rows before the header as metadata."""
+        meta = {}
+        for _, row in df_meta.iterrows():
+            # Simple key-value extraction: assume "Key: Value" or "Key Value" in cells
+            # Or adjacent cells: Cell A = Key, Cell B = Value
+            row_values = [v for v in row.values if pd.notna(v)]
+            if not row_values:
+                continue
+            
+            # Strategy: iterate through pairs
+            for i in range(0, len(row_values) - 1, 2):
+                key = str(row_values[i]).strip().rstrip(':')
+                value = row_values[i+1]
+                if key:
+                    meta[key] = value
+        return meta
 
-def format_metadata(metadata: dict[str, str | list[dict[str, str]]]) -> str:
-    """Return a human readable version of the parsed LANHE metadata.
+    def _standardize_columns(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Rename columns to standard echemistpy names."""
+        # Map Lanhe specific names to standard names
+        # This mapping can be expanded
+        column_map = {
+            "Test Time": "time/s",
+            "测试时间": "time/s",
+            "Total Time": "time/s",
+            "总时间": "time/s",
+            "Step Time": "step time/s",
+            "工步时间": "step time/s",
+            "Voltage": "Ewe/V",
+            "电压": "Ewe/V",
+            "Current": "I/mA", # Usually mA or A, need to check units if possible. Assuming mA for now or just I
+            "电流": "I/mA",
+            "Capacity": "Capacity/mAh",
+            "容量": "Capacity/mAh",
+            "Energy": "Energy/Wh",
+            "能量": "Energy/Wh",
+            "Step ID": "mode",
+            "工步号": "mode",
+            "Cycle ID": "cycle number",
+            "循环号": "cycle number",
+        }
+        
+        new_columns = {}
+        for col in df.columns:
+            col_str = str(col).strip()
+            # Check for exact match or partial match if needed
+            for k, v in column_map.items():
+                if k in col_str:
+                    new_columns[col] = v
+                    break
+            if col not in new_columns:
+                new_columns[col] = col_str # Keep original if no match
+                
+        return df.rename(columns=new_columns)
 
-    Examples
-    --------
-    >>> print(format_metadata({
-    ...     "group_name": "Cathode study",
-    ...     "test_name": "Cycle-01",
-    ...     "operator_log": [{"user": "Alice", "timestamp": "2024-05-01"}]
-    ... }))
-      Group/Project: Cathode study
-      Test name: Cycle-01
-      Operator log:
-        - Alice @ 2024-05-01
-    """
-    ordered_keys = [
-        ("group_name", "Group/Project"),
-        ("test_name", "Test name"),
-        ("start_date", "Start date"),
-        ("computer", "Host"),
-        ("project_guid", "Project GUID"),
-        ("column_signature", "Header signature"),
-        ("software_version", "Software version"),
-        ("equipment_id", "Equipment"),
-        ("connection", "Connection"),
-        ("firmware_version", "Firmware"),
-        ("controller_version", "Controller"),
-        ("hardware_date", "Hardware date"),
-        ("manufacturer", "Manufacturer"),
-        ("calibration_date", "Calibration"),
-        ("serial_number", "Serial number"),
-        ("program_guid", "Program GUID"),
-        ("program_name", "Program name"),
-        ("program_description", "Program description"),
-    ]
-    lines: list[str] = []
-    for key, label in ordered_keys:
-        value = metadata.get(key)
-        if isinstance(value, str) and value:
-            lines.append(f"  {label}: {value}")
-    operators = metadata.get("operator_log")
-    if isinstance(operators, list) and operators:
-        lines.append("  Operator log:")
-        for entry in operators:
-            user = entry.get("user", "<unknown>")
-            timestamp = entry.get("timestamp", "")
-            lines.append(f"    - {user} @ {timestamp}")
-    return "\n".join(lines)
-
-
-def format_block_summary(counts: Counter[tuple[int, int]]) -> str:
-    """Describe how often each ``(tag, channel)`` pair appears in the file.
-
-    Examples
-    --------
-    >>> from collections import Counter
-    >>> counts = Counter({(0x0603, 1): 2, (0x0002, 1): 1})
-    >>> print(format_block_summary(counts))
-    Tag/Channel usage:
-      tag 0x0002 (section_terminator), channel 0x0001: 1 blocks
-      tag 0x0603 (data_points), channel 0x0001: 2 blocks
-    """
-    lines = ["Tag/Channel usage:"]
-    for (tag, channel), count in sorted(counts.items()):
-        name = TAG_NAMES.get(tag, f"unknown_{tag:#06x}")
-        lines.append(
-            f"  tag {tag:#06x} ({name}), channel {channel:#06x}: {count} blocks",
-        )
-    return "\n".join(lines)
-
-
-def preview_samples(reader: _LanheParser, limit: int = 5) -> str:
-    """Format the first few decoded samples (default five) for display."""
-    rows: list[str] = []
-    for idx, record in enumerate(reader.iter_samples(tag_filter=0x0603)):
-        if idx >= limit:
-            break
-        v1, v2, v3, v4 = record.values
-        rows.append(
-            f"  t={record.elapsed_s:8.3f}s, Δt={record.delta_ms:5d} ms, "
-            f"values=({v1:.9f}, {v2:.9f}, {v3:.9f}, {v4:.9f})",
-        )
-    if not rows:
-        rows.append("  (no samples decoded)")
-    return "\n".join(rows)
-
-
-def main(argv: Sequence[str] | None = None) -> None:
-    parser = argparse.ArgumentParser(
-        description="Parse LANHE *.ccs electrochemistry files and print their contents.",
-    )
-    parser.add_argument("file", type=Path, help="Path to the *.ccs file")
-    parser.add_argument(
-        "--csv",
-        type=Path,
-        help="If provided, dump the decoded samples (tag 0x0603) to this CSV path.",
-    )
-    parser.add_argument(
-        "--limit",
-        type=int,
-        default=5,
-        help="Number of data rows to show in the stdout preview (default: 5).",
-    )
-    args = parser.parse_args(argv)
-
-    reader = _LanheParser(args.file)
-    print("\n=== Metadata ===")
-    print(format_metadata(reader.metadata))
-    print("\n=== Block summary ===")
-    print(format_block_summary(reader.block_counts))
-    print("\n=== Sample preview (tag 0x0603) ===")
-    print(preview_samples(reader, limit=args.limit))
-
-    if args.csv:
-        reader.export_csv(args.csv)
-        print(f"\nWrote CSV data to {args.csv}")
-
-
-if __name__ == "__main__":
-    main()
+    def _deduplicate_columns(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Deduplicate column names by appending .1, .2, etc."""
+        cols = pd.Series(df.columns)
+        for dup in cols[cols.duplicated()].unique(): 
+            cols[cols[cols == dup].index.values.tolist()] = [dup + '.' + str(i) if i != 0 else dup for i in range(sum(cols == dup))]
+        df.columns = cols
+        return df

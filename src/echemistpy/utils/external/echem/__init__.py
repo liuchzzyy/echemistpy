@@ -7,10 +7,6 @@ from .biologic_reader import (
 )
 from .lanhe_reader import (
     LanheReader,
-    SampleRecord,
-    format_block_summary,
-    format_metadata,
-    preview_samples,
 )
 
 __all__ = [
@@ -18,8 +14,4 @@ __all__ = [
     "BiologicReadError",
     "MPRfile",
     "LanheReader",
-    "SampleRecord",
-    "format_block_summary",
-    "format_metadata",
-    "preview_samples",
 ]

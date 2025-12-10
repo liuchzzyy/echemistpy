@@ -838,6 +838,8 @@ class BiologicMPTReader:
         """Parse header comments into a dictionary."""
         meta = {}
         for line in comments:
+            if isinstance(line, bytes):
+                line = line.decode("latin1")
             line = line.strip()
             if not line:
                 continue
