@@ -2,15 +2,23 @@
 
 ## 项目概述
 
-echemistpy 是一个科学数据分析库，专注于电化学（XRD、XPS、TGA、CV）等实验技术的统一数据处理。核心架构采用可扩展的分析器模式 + 管道编排设计。
+echemistpy 是一个科学数据分析库，专注于电化学技术和材料表征（XRD、XPS、TGA、XAS, TXM）等实验技术的统一数据处理。核心架构采用可扩展的分析器模式 + 管道编排设计。
+
+### 核心技术栈
+- **xarray**: 多维标注数组，所有数据的内部表示
+- **numpy**: 数值计算和数组操作
+- **pluggy**: 插件系统，支持可扩展的读取器和分析器架构
+- **traitlets**: 类型验证和配置管理
 
 ## 核心架构模式
 
 ### 数据流设计
-- **Measurement** (`io/structures.py`): 包含 `xarray.Dataset`、`MeasurementMetadata` 和 `Axis` 列表的容器
-- **TechniqueAnalyzer** (`analysis/base.py`): 所有分析器的抽象基类，实现 `analyze()` 方法
+- **RawData** + **RawDataInfo** (`io/structures.py`): 原始仪器数据的容器，包含 `xarray.Dataset` 和元数据
+- **Measurement** + **MeasurementInfo** (`io/structures.py`): 标准化后的测量数据，包含 `xarray.Dataset` 和实验元数据
+- **AnalysisResult** + **AnalysisResultInfo** (`io/structures.py`): 分析后的结果，包含 `xarray.Dataset` 和实验元数据
+- **TechniqueAnalyzer** (`processing/analysis/base.py`): 所有分析器的抽象基类，实现 `analyze()` 方法
 - **AnalysisPipeline** (`pipelines/manager.py`): 协调加载、分析和聚合的高级编排器
-- **TechniqueRegistry** (`analysis/registry.py`): 技术标识符到分析器实例的映射注册表
+- **TechniqueRegistry** (`processing/analysis/registry.py`): 技术标识符到分析器实例的映射注册表
 
 ### 分析器实现模式
 继承 `TechniqueAnalyzer` 时必须实现：
@@ -24,9 +32,17 @@ class CustomAnalyzer(TechniqueAnalyzer):
     
     def compute(self, measurement: Measurement) -> tuple[Dict[str, Any], Dict[str, xr.Dataset]]:
         # 返回 (summary_dict, tables_dict)
+        return summary, tables
 ```
 
-查看 `analysis/echem.py` 的 `CyclicVoltammetryAnalyzer` 作为完整示例。
+查看 [analysis/echem.py](src/echemistpy/processing/analysis/echem.py) 的 `CyclicVoltammetryAnalyzer` 作为完整示例。
+
+### 数据加载流程
+1. **RawData 阶段**: 仪器特定读取器 → `RawData` + `RawDataInfo`
+2. **Measurement 阶段**: 数据标准化 → `Measurement` + `MeasurementInfo` (统一列名、单位)
+3. **Analysis 阶段**: 技术特定分析器 → `AnalysisResult` + `AnalysisResultInfo`
+
+使用 `load_data_file()` 自动处理整个流程，或手动调用各阶段函数实现细粒度控制。
 
 ## 开发工作流
 
@@ -47,9 +63,10 @@ conda activate txm
 - 开发工具：`ruff` 用于代码质量，`pytest` 用于测试
 
 ### 测试策略
-- `tests/test_doctests.py`: 验证所有公开模块的 docstring 示例
-- `tests/test_echem_readers_comprehensive.py`: 使用 `examples/echem/` 中真实数据文件的综合测试
+- 现有测试: [test_biologic_reader.py](tests/test_biologic_reader.py)、[test_lanhe_reader.py](tests/test_lanhe_reader.py)
+- 使用 [examples/echem/](examples/echem/) 中的真实仪器数据文件进行集成测试
 - 运行测试: `python -m pytest tests/`
+- 预期测试: doctest 验证、综合读取器测试 (将来添加)
 
 ### 代码质量
 使用 Ruff (配置在 `pyproject.toml`)：
@@ -61,28 +78,30 @@ ruff format src/ tests/  # 代码格式化
 ## 扩展点和集成
 
 ### 添加新技术支持
-1. 在 `analysis/` 下创建新的分析器模块
+1. 在 [processing/analysis/](src/echemistpy/processing/analysis/) 下创建新的分析器模块
 2. 继承 `TechniqueAnalyzer` 并实现必需方法
-3. 在 `analysis/registry.py` 的 `create_default_registry()` 中注册
+3. 在 [analysis/registry.py](src/echemistpy/processing/analysis/registry.py) 的 `create_default_registry()` 中注册
 
 ### 外部数据读取器
-位于 `utils/external/echem/`，例如：
+位于 [utils/external/echem/](src/echemistpy/utils/external/echem/)，例如：
 - `biologic_reader.py`: BioLogic .mpt/.mpr 文件解析器 (`BiologicMPTReader` 类)
 - `lanhe_reader.py`: LANHE .ccs 文件解析器 (`LanheReader` 类)
 
-新读取器应返回 `Measurement` 对象，包含正确的元数据和轴定义。读取器使用状态机模式 (`_ReaderState`) 处理复杂文件格式。
+新读取器应返回 `RawData` + `RawDataInfo` 对象，包含正确的元数据和轴定义。读取器使用状态机模式 (`_ReaderState`) 处理复杂文件格式。
 
 ### I/O 模式
-- `io/loaders.py`: `load_table()` 支持 CSV/TSV/JSON/NetCDF 格式
-- `io/saver.py`: `save_table()` 导出 `xarray.Dataset` 到各种格式
+- [io/loaders.py](src/echemistpy/io/loaders.py): `load_table()` 支持 CSV/TSV/JSON/NetCDF 格式，`load_data_file()` 协调整个数据加载流程
+- [io/saver.py](src/echemistpy/io/saver.py): `save_table()` 导出 `xarray.Dataset` 到各种格式
 - 所有数据使用 `xarray.Dataset` 作为内部表示，坐标名为 "row"
+- 数据标准化: `standardize_measurement()` 统一不同仪器的列名和单位
 
 ## 项目特定约定
 
 ### 文件组织
-- Jupyter notebooks 在 `docs/Characterization/` 按技术分类
-- 示例数据文件在 `examples/echem/` 
+- Jupyter notebooks 在 [docs/Characterization/](docs/Characterization/) 按技术分类
+- 示例数据文件在 [examples/echem/](examples/echem/) 
 - 所有源码使用绝对导入: `from echemistpy.io import Measurement`
+- 分析器模块在 [processing/analysis/](src/echemistpy/processing/analysis/) 下
 
 ### 数据约定
 - 时间列统一使用 `"time/s"` 标识符 (`t_str` 常量)
@@ -91,9 +110,10 @@ ruff format src/ tests/  # 代码格式化
 - 所有数据维度名称为 `"row"`
 - 数据预处理：基线校正 (`baseline_corrected`)、归一化 (`normalized_current`)
 - 分析器输出：`summary` (字典) + `tables` (xarray.Dataset 字典)
+- 读取器输出：`RawData` (包含 `xarray.Dataset`) + `RawDataInfo` (包含元数据字典)
 
 ### 测试数据
-使用 `examples/echem/` 中的真实仪器文件进行集成测试，确保读取器能处理实际实验室数据格式。
+使用 [examples/echem/](examples/echem/) 中的真实仪器文件进行集成测试，确保读取器能处理实际实验室数据格式。
 
 ## 常见模式
 
@@ -112,3 +132,11 @@ summary_table = pipeline.summary_table(results)
 
 ### 处理分析结果
 `AnalysisResult` 包含 `summary` (字典)、`tables` (xarray.Dataset 字典) 和可选的 `figures`。
+
+### 读取仪器数据文件
+```python
+from echemistpy.utils.external.echem.biologic_reader import BiologicMPTReader
+
+reader = BiologicMPTReader("path/to/file.mpt")
+raw_data, raw_data_info = reader.read()  # 返回 RawData 和 RawDataInfo
+```

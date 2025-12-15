@@ -1,64 +1,149 @@
+[build-system]
+build-backend = "setuptools.build_meta"
+requires = ["setuptools>=64", "setuptools-scm>=8", "wheel"]
+
 [project]
 name = "echemistpy"
 version = "0.1.0"
-description = "Cheng Liu, PhD"
+description = "Unified data processing for electrochemical techniques and materials characterization (XRD, XPS, TGA, XAS, TXM)"
 readme = "README.md"
 requires-python = ">=3.10,<3.13"
+license = {text = "MIT"}
+authors = [
+  {name = "Cheng Liu", email = "liuchzzyy@gmail.com"},
+]
+keywords = ["electrochemistry", "materials characterization", "data analysis"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Topic :: Scientific/Engineering",
+  "Topic :: Scientific/Engineering :: Chemistry",
+  "Intended Audience :: Science/Research",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+]
 dependencies = [
-    "exspy>=0.3.2",
-    "h5netcdf>=1.6.3",
-    "hyperspy[all]>=2.3.0",
-    "ipykernel>=6.30.0",
-    "ipympl>=0.9.7",
-    "jupyterlab>=4.4.5",
-    "matplotlib>=3.10.3",
-    "numpy>=2.2.6",
-    "netcdf4>=1.7.2",
-    "openpyxl>=3.1.5",
-    "pandas>=2.2.3",
-    "ruff>=0.12.4",
-    "scipy>=1.15.3",
-    "seaborn>=0.13.2",
-    "sparse>=0.17.0",
-    "spectrochempy==0.7.1",
-    "xarray>=2025.6.1",
-    "uncertainties>=3.2.3",
+  # Data Handling
+  "xarray>=2025.6.1",
+  "numpy>=2.2.6",
+  "pandas>=2.2.3",
+  "h5netcdf>=1.6.3",
+  
+  # Scientific computing
+  "scipy>=1.15.3",
+  "matplotlib>=3.10.3",
+  
+  # File formats
+  "openpyxl>=3.1.5",  # Excel files
+  
+  # Development tools
+  "ruff>=0.12.4",
+  "pluggy>=1.0.0",
+  "traitlets>=5.11.1",
+  
 ]
 
+[project.optional-dependencies]
+dev = [
+  "ruff",
+  "pre-commit",
+  "pytest",
+  "pytest-cov",
+  "echemistpy[interactive]",
+  "echemistpy[docs]",
+]
+docs = [
+  "sphinx",
+  "sphinx-rtd-theme",
+  "numpydoc",
+  "nbsphinx",
+  "jupyter-sphinx",
+  "sphinx-copybutton",
+]
+interactive = [
+  "jupyter",
+  "jupyterlab>=4.4.5",
+  "ipykernel>=6.30.0",
+  "ipympl>=0.9.7",
+]
+test = [
+  "pytest",
+  "pytest-cov",
+  "pytest-mock",
+]
+
+[project.urls]
+homepage = "https://github.com/liuchzzyy/echemistpy"
+repository = "https://github.com/liuchzzyy/echemistpy"
+issues = "https://github.com/liuchzzyy/echemistpy/issues"
+
 [tool.setuptools]
-package-dir = {"" = "src"}
+include-package-data = true
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+"echemistpy" = ["*.pyi"]
+"echemistpy.data" = ["*.json", "*.yaml"]
+
 [tool.ruff]
 line-length = 200
 preview = true
 
 [tool.ruff.lint]
 select = [
-    # Pyflakes
-    "F", # Pyflakes rules (F821 checks undefined names)
+  # Pyflakes
+  "F", # Pyflakes rules (F821 checks undefined names)
 
-    # Pycodestyle
-    "E", # Error-level PEP 8 rules
-    "W", # Warning-level PEP 8 rules
+  # Pycodestyle
+  "E", # Error-level PEP 8 rules
+  "W", # Warning-level PEP 8 rules
 
-    # flake8 plugins
-    "G",   # flake8-logging-format rules
-    "B",   # flake8-bugbear rules
-    "C4",  # flake8-comprehensions rules
-    "N",   # pep8-naming rules
-    "SIM", # flake8-simplify rules
-    "ARG", # flake8-unused-arguments
-    "ERA", # eradicate (commented out code)
-    "PL",  # pylint rules
-    "RUF", # Ruff-specific rules
+  # flake8 plugins
+  "G",   # flake8-logging-format rules
+  "B",   # flake8-bugbear rules
+  "C4",  # flake8-comprehensions rules
+  "N",   # pep8-naming rules
+  "SIM", # flake8-simplify rules
+  "ARG", # flake8-unused-arguments
+  "ERA", # eradicate (commented out code)
+  "PL",  # pylint rules
+  "RUF", # Ruff-specific rules
 
-    # Security
-    "S", # flake8-bandit (security)
+  # Security
+  "S", # flake8-bandit (security)
 ]
 extend-select = ["I"] # isort
 ignore = ["E501", "PLR2004", "ERA001", "RUF001"]
 
 # Logger objects that should be checked
 logger-objects = ["app.logger", "logger"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*" = [
+  "S101", # Use of assert detected
+  "ARG", # Unused function args in tests
+]
+
+[tool.pytest.ini_options]
+addopts = ["--doctest-modules", "-p no:warnings"]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+
+[tool.coverage.run]
+source = ["src/echemistpy/"]
+
+[tool.coverage.report]
+exclude_lines = [
+  "pragma: no cover",
+  "raise AssertionError",
+  "raise NotImplementedError",
+  "if __name__ == .__main__.:",
+  "def __repr__",
+]
+ignore_errors = true
