@@ -1,4 +1,4 @@
-"""I/O helpers."""
+"""I/O helpers with pluggy-based plugin system."""
 
 from .loaders import (
     load_data_file,
@@ -11,45 +11,39 @@ from .loaders import (
     DataStandardizer,
 )
 from .saver import save_measurement, save_results
+from .plugin_manager import get_plugin_manager
 
-# Import core structures for backward compatibility
-from echemistpy.core.structures import (
+# Import core structures
+from .structures import (
     Measurement,
     MeasurementInfo,
     RawData,
     RawDataInfo,
     AnalysisResult,
     AnalysisResultInfo,
-    NXFile,
-    NXGroup,
-    NXField,
-    NXLink,
-    Entry as EChemEntry,
-    Entries as EChemEntries,
 )
-# from .model import EChemEntry, EChemEntries
 
 __all__ = [
-    "DataStandardizer",
+    # Data structures
     "Measurement",
     "MeasurementInfo",
     "RawData",
     "RawDataInfo",
     "AnalysisResult",
     "AnalysisResultInfo",
-    "NXFile",
-    "NXGroup",
-    "NXField",
-    "NXLink",
-    "EChemEntry",
-    "EChemEntries",
-    "detect_technique",
-    "get_file_info",
-    "list_supported_formats",
+    # Loading functions
     "load_data_file",
     "load_table",
     "register_loader",
+    "get_file_info",
+    "list_supported_formats",
+    # Standardization
+    "standardize_measurement",
+    "detect_technique",
+    "DataStandardizer",
+    # Saving functions
     "save_measurement",
     "save_results",
-    "standardize_measurement",
+    # Plugin management
+    "get_plugin_manager",
 ]
