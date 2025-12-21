@@ -12,35 +12,39 @@ import argparse
 import json
 import logging
 import re
+import sys
 import time
+from collections import OrderedDict, defaultdict
 from datetime import date, datetime
-from collections import defaultdict, OrderedDict
-from pathlib import Path
 from os import SEEK_SET
+from pathlib import Path
 from typing import Any
 
 import numpy as np
 import pandas as pd
-from traitlets import HasTraits, Union, Dict, Instance, Unicode, validate
+from traitlets import Dict, HasTraits, Instance, Unicode, Union, validate
 
 logger = logging.getLogger(__name__)
 
 UNKNOWN_COLUMN_TYPE_HIERARCHY = ("<f8", "<f4", "<u4", "<u2", "<u1")
 
 
-def fieldname_to_dtype(fieldname: str) -> tuple[str, Any]:
-    """Convert column header from MPT file to (name, dtype) tuple."""
-    if fieldname == "mode":
-        return ("mode", np.uint8)
-    if fieldname in (
+def _get_dtype_from_column_type(fieldname: str) -> Any:
+    """Helper to get dtype based on column classification."""
+    # Boolean columns
+    bool_columns = {
         "ox/red",
         "error",
         "control changes",
         "Ns changes",
         "counter inc.",
-    ):
-        return (fieldname, np.bool_)
-    elif fieldname in (
+    }
+
+    # Integer columns
+    int_columns = {"cycle number", "I Range", "Ns", "half cycle", "z cycle"}
+
+    # Float64 columns
+    float_columns = {
         "time/s",
         "P/W",
         "(Q-Qo)/mA.h",
@@ -64,9 +68,6 @@ def fieldname_to_dtype(fieldname: str) -> tuple[str, Any]:
         "Im(Permittivity)",
         "|Permittivity|",
         "Tan(Delta)",
-    ):
-        return (fieldname, np.float64)
-    elif fieldname in (
         "Q charge/discharge/mA.h",
         "step time/s",
         "Q charge/mA.h",
@@ -74,17 +75,10 @@ def fieldname_to_dtype(fieldname: str) -> tuple[str, Any]:
         "Temperature/°C",
         "Efficiency/%",
         "Capacity/mA.h",
-    ):
-        return (fieldname, np.float64)
-    elif fieldname in ("cycle number", "I Range", "Ns", "half cycle", "z cycle"):
-        return (fieldname, np.int_)
-    elif fieldname in ("dq/mA.h", "dQ/mA.h"):
-        return ("dQ/mA.h", np.float64)
-    elif fieldname in ("I/mA", "<I>/mA"):
-        return ("I/mA", np.float64)
-    elif fieldname in ("Ewe/V", "<Ewe>/V", "Ecell/V", "<Ewe/V>"):
-        return ("Ewe/V", np.float64)
-    elif fieldname.endswith((
+    }
+
+    # Suffix-based float columns
+    float_suffixes = {
         "/s",
         "/Hz",
         "/deg",
@@ -109,13 +103,45 @@ def fieldname_to_dtype(fieldname: str) -> tuple[str, Any]:
         "/Ohm.cm",
         "/mS/cm",
         "/%",
-    )):
-        return (fieldname, np.float64)
-    elif fieldname.startswith("empty_column_"):
-        # Handle empty columns that were renamed
-        return (fieldname, np.float64)
-    else:
-        raise ValueError("Invalid column header: %s" % fieldname)
+    }
+
+    if fieldname in bool_columns:
+        return np.bool_
+    if fieldname in int_columns:
+        return np.int_
+    if fieldname in float_columns:
+        return np.float64
+    if fieldname.endswith(tuple(float_suffixes)) or fieldname.startswith("empty_column_"):
+        return np.float64
+    return None
+
+
+def fieldname_to_dtype(fieldname: str) -> tuple[str, Any]:
+    """Convert column header from MPT file to (name, dtype) tuple."""
+    # Special case: mode is uint8
+    if fieldname == "mode":
+        return ("mode", np.uint8)
+
+    # Special mappings (field renames)
+    special_mappings = {
+        "dq/mA.h": ("dQ/mA.h", np.float64),
+        "dQ/mA.h": ("dQ/mA.h", np.float64),
+        "I/mA": ("I/mA", np.float64),
+        "<I>/mA": ("I/mA", np.float64),
+        "Ewe/V": ("Ewe/V", np.float64),
+        "<Ewe>/V": ("Ewe/V", np.float64),
+        "Ecell/V": ("Ewe/V", np.float64),
+        "<Ewe/V>": ("Ewe/V", np.float64),
+    }
+
+    if fieldname in special_mappings:
+        return special_mappings[fieldname]
+
+    dtype = _get_dtype_from_column_type(fieldname)
+    if dtype is not None:
+        return (fieldname, dtype)
+
+    raise ValueError("Invalid column header: %s" % fieldname)
 
 
 def comma_converter(float_text: bytes) -> float:
@@ -123,7 +149,7 @@ def comma_converter(float_text: bytes) -> float:
     return float(float_text.translate(bytes.maketrans(b",", b".")))
 
 
-def MPTfile(file_or_path: str | Path, encoding: str = "latin1") -> tuple[np.ndarray, list[bytes]]:
+def mpt_file(file_or_path: str | Path, encoding: str = "latin1") -> tuple[np.ndarray, list[bytes]]:
     """Open .mpt files as numpy record arrays with comments."""
     if isinstance(file_or_path, (str, Path)):
         mpt_file = open(file_or_path, "rb")
@@ -134,7 +160,7 @@ def MPTfile(file_or_path: str | Path, encoding: str = "latin1") -> tuple[np.ndar
 
     try:
         magic = next(mpt_file).strip()
-        if magic not in (b"EC-Lab ASCII FILE", b"BT-Lab ASCII FILE"):
+        if magic not in {b"EC-Lab ASCII FILE", b"BT-Lab ASCII FILE"}:
             raise ValueError(f"Bad first line: {magic!r}")
 
         nb_headers_match = re.match(rb"Nb header lines : (\d+)\s*$", next(mpt_file))
@@ -167,7 +193,7 @@ def MPTfile(file_or_path: str | Path, encoding: str = "latin1") -> tuple[np.ndar
             """Convert str to float, handling ',' as decimal point."""
             return float(s.replace(",", "."))
 
-        converter_dict: dict[int, Any] = {i: str_to_float for i in range(len(fieldnames))}
+        converter_dict: dict[int, Any] = dict.fromkeys(range(len(fieldnames)), str_to_float)
         mpt_array = np.loadtxt(mpt_file, dtype=record_type, converters=converter_dict)  # type: ignore[arg-type]
 
         return mpt_array, comments
@@ -206,7 +232,7 @@ VMPdata_colID_dtype_map = {
     11: ("<I>/mA", "<f8"),
     13: ("(Q-Qo)/mA.h", "<f8"),
     16: ("Analog IN 1/V", "<f4"),
-    17: ("Analog IN 2/V", "<f4"),  # Probably column 18 is Analog IN 3/V, if anyone hits this error in the future  # noqa: E501
+    17: ("Analog IN 2/V", "<f4"),  # Probably column 18 is Analog IN 3/V, if anyone hits this error in the future
     19: ("control/V", "<f4"),
     20: ("control/mA", "<f4"),
     23: ("dQ/mA.h", "<f8"),  # Same as 7?
@@ -345,7 +371,7 @@ VMPdata_colID_flag_map = {
 }
 
 
-def parse_BioLogic_date(date_text: bytes | str) -> date:
+def parse_biologic_date(date_text: bytes | str) -> date:
     """Parse date from Bio-Logic files."""
     date_formats = ["%m/%d/%y", "%m-%d-%y", "%m.%d.%y"]
     date_string = date_text.decode("ascii") if isinstance(date_text, bytes) else date_text
@@ -358,7 +384,7 @@ def parse_BioLogic_date(date_text: bytes | str) -> date:
     raise ValueError(f"Could not parse timestamp {date_string!r}")
 
 
-def VMPdata_dtype_from_colIDs(colIDs, error_on_unknown_column: bool = True):
+def vmpdata_dtype_from_col_ids(col_ids, error_on_unknown_column: bool = True):
     """Get a numpy record type from a list of column ID numbers.
 
     The binary layout of the data in the MPR file is described by the sequence
@@ -379,8 +405,8 @@ def VMPdata_dtype_from_colIDs(colIDs, error_on_unknown_column: bool = True):
     type_list = []
     field_name_counts = defaultdict(int)
     flags_dict = OrderedDict()
-    for colID in colIDs:
-        if colID in VMPdata_colID_flag_map:
+    for col_id in col_ids:
+        if col_id in VMPdata_colID_flag_map:
             # Some column IDs represent boolean flags or small integers
             # These are all packed into a single 'flags' byte whose position
             # in the overall record is determined by the position of the first
@@ -389,29 +415,26 @@ def VMPdata_dtype_from_colIDs(colIDs, error_on_unknown_column: bool = True):
             if "flags" not in field_name_counts:
                 type_list.append(("flags", "u1"))
                 field_name_counts["flags"] = 1
-            flag_name, flag_mask, flag_type = VMPdata_colID_flag_map[colID]
+            flag_name, flag_mask, flag_type = VMPdata_colID_flag_map[col_id]
             # TODO what happens if a flag colID has already been seen
             # i.e. if flag_name is already present in flags_dict?
             # Does it create a second 'flags' byte in the record?
             flags_dict[flag_name] = (np.uint8(flag_mask), flag_type)
-        elif colID in VMPdata_colID_dtype_map:
-            field_name, field_type = VMPdata_colID_dtype_map[colID]
+        elif col_id in VMPdata_colID_dtype_map:
+            field_name, field_type = VMPdata_colID_dtype_map[col_id]
             field_name_counts[field_name] += 1
             count = field_name_counts[field_name]
-            if count > 1:
-                unique_field_name = "%s %d" % (field_name, count)
-            else:
-                unique_field_name = field_name
+            unique_field_name = "%s %d" % (field_name, count) if count > 1 else field_name
             type_list.append((unique_field_name, field_type))
         else:
             if error_on_unknown_column:
-                raise ValueError(f"Unknown column ID {colID}")
-            type_list.append(("unknown_colID_%d" % colID, UNKNOWN_COLUMN_TYPE_HIERARCHY[0]))
+                raise ValueError(f"Unknown column ID {col_id}")
+            type_list.append(("unknown_colID_%d" % col_id, UNKNOWN_COLUMN_TYPE_HIERARCHY[0]))
 
     return type_list, flags_dict
 
 
-def read_VMP_modules(fileobj, read_module_data=True):
+def read_vmp_modules(fileobj, read_module_data=True):
     """Reads in module headers in the VMPmodule_hdr format. Yields a dict with
     the headers and offset for each module.
 
@@ -423,20 +446,20 @@ def read_VMP_modules(fileobj, read_module_data=True):
             break
         elif module_magic != b"MODULE":
             raise ValueError("Found %r, expecting start of new VMP MODULE" % module_magic)
-        VMPmodule_hdr = VMPmodule_hdr_v1
+        vmp_module_hdr = VMPmodule_hdr_v1
 
         # Reading headers binary information
-        hdr_bytes = fileobj.read(VMPmodule_hdr.itemsize)
-        if len(hdr_bytes) < VMPmodule_hdr.itemsize:
+        hdr_bytes = fileobj.read(vmp_module_hdr.itemsize)
+        if len(hdr_bytes) < vmp_module_hdr.itemsize:
             raise IOError("Unexpected end of file while reading module header")
 
         # Checking if EC-Lab version is >= 11.50
         if hdr_bytes[35:39] == b"\xff\xff\xff\xff":
-            VMPmodule_hdr = VMPmodule_hdr_v2
+            vmp_module_hdr = VMPmodule_hdr_v2
             hdr_bytes += fileobj.read(VMPmodule_hdr_v2.itemsize - VMPmodule_hdr_v1.itemsize)
 
-        hdr = np.frombuffer(hdr_bytes, dtype=VMPmodule_hdr, count=1)
-        hdr_dict = dict(((n, hdr[n][0]) for n in VMPmodule_hdr.names or []))
+        hdr = np.frombuffer(hdr_bytes, dtype=vmp_module_hdr, count=1)
+        hdr_dict = {n: hdr[n][0] for n in vmp_module_hdr.names or []}
         hdr_dict["offset"] = fileobj.tell()
         if read_module_data:
             hdr_dict["data"] = fileobj.read(hdr_dict["length"])
@@ -524,7 +547,7 @@ class BiologicDataReader(HasTraits):
 
     def _read_mpt_file(self) -> tuple[dict[str, Any], dict[str, Any]]:
         """Read metadata and data from MPT file."""
-        mpt_array, comments = MPTfile(self.filepath)
+        mpt_array, comments = mpt_file(self.filepath)
 
         metadata = {
             "file_info": self._parse_mpt_metadata(list(comments)),
@@ -535,7 +558,7 @@ class BiologicDataReader(HasTraits):
         column_names: list[str] = list(mpt_array.dtype.names or [])
         _, unique_col_names = self._get_unique_column_names(column_names)
 
-        data_dict = {unique_name: mpt_array[raw_name].tolist() for raw_name, unique_name in zip(column_names, unique_col_names)}
+        data_dict = {unique_name: mpt_array[raw_name].tolist() for raw_name, unique_name in zip(column_names, unique_col_names, strict=True)}
         data_dict["_metadata"] = {
             "file_type": "MPT",
             "num_rows": len(mpt_array),
@@ -578,21 +601,23 @@ class BiologicDataReader(HasTraits):
                     d[key] = [existing, value]
 
         for line in comments:
-            if isinstance(line, bytes):
+            text_line = line
+            if isinstance(text_line, bytes):
                 try:
-                    line = line.decode("latin1")
-                except Exception:
+                    text_line = text_line.decode("latin1")
+                except Exception as e:
+                    logger.debug("Failed to decode line as latin1: %s", e)
                     continue
 
-            line = line.rstrip("\r\n")
-            if not line.strip():
+            text_line = text_line.rstrip("\r\n")
+            if not text_line.strip():
                 # Empty line may signal end of parameters section
                 if in_parameters and current_section is not None:
                     in_parameters = False
                 continue
 
-            indent_level = len(line) - len(line.lstrip())
-            line_content = line.strip()
+            indent_level = len(text_line) - len(text_line.lstrip())
+            line_content = text_line.strip()
 
             if indent_level > 0 and current_section is not None:
                 kv = split_key_value(line_content)
@@ -622,18 +647,17 @@ class BiologicDataReader(HasTraits):
                         add_or_update_value(current_section, key_normalized, value.strip())
                     elif line_content:
                         add_or_update_value(current_section, BiologicDataReader._normalize_key(line_content), "")
-                else:
-                    # Only add to meta if we're not in parameters section
-                    if not in_parameters:
-                        kv = split_key_value(line_content)
-                        if kv:
-                            key, value = kv
-                            if value == "":
-                                current_section = {}
-                                meta[key] = current_section
-                            else:
-                                add_or_update_value(meta, key, value)
-                                current_section = None
+                # Only add to meta if we're not in parameters section
+                elif not in_parameters:
+                    kv = split_key_value(line_content)
+                    if kv:
+                        key, value = kv
+                        if not value:
+                            current_section = {}
+                            meta[key] = current_section
+                        else:
+                            add_or_update_value(meta, key, value)
+                            current_section = None
 
         if work_mode_list:
             meta["work_mode"] = work_mode_list
@@ -871,7 +895,7 @@ class BiologicDataReader(HasTraits):
                     return
                 df.to_csv(output_path.with_suffix(".csv"), index=False, encoding="utf-8-sig")
         except IOError as e:
-            logger.error(f"Failed to save {data_type} to {output_path}: {e}")
+            logger.error("Failed to save %s to %s: %s", data_type, output_path, e)
 
     @staticmethod
     def _read_all_biologic(folder_path: Path | str | None = None) -> dict[str, tuple[dict[str, Any], dict[str, Any]]]:
@@ -888,8 +912,8 @@ class BiologicDataReader(HasTraits):
                 reader.filepath = bio_file
                 metadata, data = reader._read_biologic_file()
                 all_data[bio_file.name] = (metadata, data)
-            except Exception as e:
-                logger.error(f"Error processing {bio_file.name}: {e}", exc_info=True)
+            except Exception:
+                logger.exception("Error processing %s", bio_file.name)
 
         return all_data
 
@@ -903,10 +927,19 @@ class BiologicDataReader(HasTraits):
         """Load BioLogic file or folder and return data."""
         filepath = BiologicDataReader._ensure_path(filepath)
         if filepath.is_dir():
-            return BiologicDataReader._read_all_biologic(filepath)
+            result = BiologicDataReader._read_all_biologic(filepath)
+            # Add echem technique metadata to all results
+            for key in result:
+                metadata, data = result[key]
+                metadata["technique"] = "echem"
+                result[key] = (metadata, data)
+            return result
         if filepath.is_file():
             reader = BiologicDataReader(filepath)
-            return reader._read_biologic_file()
+            metadata, data = reader._read_biologic_file()
+            # Add echem technique metadata
+            metadata["technique"] = "echem"
+            return metadata, data
         raise FileNotFoundError(f"Path not found: {filepath}")
 
     @staticmethod
@@ -950,14 +983,13 @@ class BiologicDataReader(HasTraits):
                 metadata_file = output_dir / f"{base_name}_metadata.json"
                 data_file = output_dir / f"{base_name}_data.json"
                 BiologicDataReader._process_and_save(metadata, data, metadata_file, data_file, save_original, save_cleaned)
-        else:
-            if isinstance(result, dict):
-                for filename, (metadata, data) in result.items():
-                    file_path = Path(filename)
-                    base_name = f"{file_path.stem}_{file_path.suffix.lstrip('.')}"
-                    metadata_file = output_dir / f"{base_name}_metadata.json"
-                    data_file = output_dir / f"{base_name}_data.json"
-                    BiologicDataReader._process_and_save(metadata, data, metadata_file, data_file, save_original, save_cleaned)
+        elif isinstance(result, dict):
+            for filename, (metadata, data) in result.items():
+                file_path = Path(filename)
+                base_name = f"{file_path.stem}_{file_path.suffix.lstrip('.')}"
+                metadata_file = output_dir / f"{base_name}_metadata.json"
+                data_file = output_dir / f"{base_name}_data.json"
+                BiologicDataReader._process_and_save(metadata, data, metadata_file, data_file, save_original, save_cleaned)
 
 
 if __name__ == "__main__":
@@ -972,8 +1004,8 @@ if __name__ == "__main__":
     path = Path(args.path)
 
     if not path.exists():
-        logger.error(f"Path not found: {path}")
-        exit(1)
+        logger.error("Path not found: %s", path)
+        sys.exit(1)
 
     # save_cleaned=True, save_original=args.no_clean
     # When --no-clean is passed, save_original=True to also save original data

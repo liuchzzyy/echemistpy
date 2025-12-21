@@ -11,7 +11,7 @@ from typing import Any
 
 import openpyxl
 import pandas as pd
-from traitlets import HasTraits, Union, Dict, Instance, Unicode, validate
+from traitlets import Dict, HasTraits, Instance, Unicode, Union, validate
 
 logger = logging.getLogger(__name__)
 
@@ -63,7 +63,7 @@ class XLSXDataReader(HasTraits):
                                 test_info[header] = value
                         metadata["Test_Information"] = test_info
                 except Exception as e:
-                    logger.debug(f"Error reading Test Information: {e}")
+                    logger.debug("Error reading Test Information: %s", e)
 
             # Read Ch1_Proc sheet and extract Work Mode table
             if "Ch1_Proc" in wb.sheetnames:
@@ -82,7 +82,7 @@ class XLSXDataReader(HasTraits):
                             table_headers = [h for h in table_headers if h]
                             continue
                         if table_headers:
-                            if not row[0] or (isinstance(row[0], str) and row[0].strip() == ""):
+                            if not row[0] or (isinstance(row[0], str) and not row[0].strip()):
                                 break
                             table_row = {}
                             for i, header in enumerate(table_headers):
@@ -95,7 +95,7 @@ class XLSXDataReader(HasTraits):
                         proc_info["Work_Mode"] = work_mode_table
                     metadata["Channel_Process_Info"] = proc_info
                 except Exception as e:
-                    logger.debug(f"Error reading Channel Process Info: {e}")
+                    logger.debug("Error reading Channel Process Info: %s", e)
 
             # Read Log sheet
             if "Log" in wb.sheetnames:
@@ -112,7 +112,7 @@ class XLSXDataReader(HasTraits):
                             log_info.append(log_entry)
                     metadata["Log_Info"] = log_info
                 except Exception as e:
-                    logger.debug(f"Error reading Log Info: {e}")
+                    logger.debug("Error reading Log Info: %s", e)
 
             # Find DefaultGroup sheet
             for sheet_name in wb.sheetnames:
@@ -289,14 +289,15 @@ class XLSXDataReader(HasTraits):
                 if isinstance(data, pd.DataFrame):
                     df = data
                 else:
-                    assert isinstance(data, dict), "data must be dict or DataFrame"
+                    if not isinstance(data, dict):
+                        raise TypeError("data must be dict or DataFrame")
                     data_copy = {k: v for k, v in data.items() if k != "_metadata"}
                     if not data_copy:
                         return
                     df = pd.DataFrame(data_copy)
                 df.to_csv(output_path.with_suffix(".csv"), index=False, encoding="utf-8-sig")
         except IOError as e:
-            logger.error(f"Failed to save {data_type} to {output_path}: {e}")
+            logger.error("Failed to save %s to %s: %s", data_type, output_path, e)
 
     @staticmethod
     def _read_all_xlsx(folder_path: Path | str | None = None) -> dict[str, tuple[dict[str, Any], dict[str, Any]]]:
@@ -313,8 +314,8 @@ class XLSXDataReader(HasTraits):
                 reader.filepath = xlsx_file
                 metadata, data = reader._read_xlsx()
                 all_data[xlsx_file.stem] = (metadata, data)
-            except Exception as e:
-                logger.error(f"Error processing {xlsx_file.name}: {e}", exc_info=True)
+            except Exception:
+                logger.exception("Error processing %s", xlsx_file.name)
 
         return all_data
 
@@ -323,10 +324,19 @@ class XLSXDataReader(HasTraits):
         """Load XLSX file or folder and return data."""
         filepath = Path(filepath) if isinstance(filepath, str) else filepath
         if filepath.is_dir():
-            return XLSXDataReader._read_all_xlsx(filepath)
+            result = XLSXDataReader._read_all_xlsx(filepath)
+            # Add echem technique metadata to all results
+            for key in result:
+                metadata, data = result[key]
+                metadata["technique"] = "echem"
+                result[key] = (metadata, data)
+            return result
         if filepath.is_file():
             reader = XLSXDataReader(filepath)
-            return reader._read_xlsx()
+            metadata, data = reader._read_xlsx()
+            # Add echem technique metadata
+            metadata["technique"] = "echem"
+            return metadata, data
         raise FileNotFoundError(f"Path not found: {filepath}")
 
     @staticmethod
@@ -351,7 +361,8 @@ class XLSXDataReader(HasTraits):
         result = XLSXDataReader.load(input_filepath)
 
         if input_filepath.is_file():
-            assert isinstance(result, tuple), "Expected tuple for file"
+            if not isinstance(result, tuple):
+                raise TypeError("Expected tuple for file")
             metadata, data = result
             metadata_file = output_dir.joinpath(f"{input_filepath.stem}_metadata.json")
             data_file = output_dir.joinpath(f"{input_filepath.stem}_data.json")
@@ -366,7 +377,8 @@ class XLSXDataReader(HasTraits):
                 XLSXDataReader._save_data(cleaned_metadata, metadata_file, "metadata", cleaned=True)
                 XLSXDataReader._save_data(cleaned_data, data_file, "data", cleaned=True)
         else:
-            assert isinstance(result, dict), "Expected dict for folder"
+            if not isinstance(result, dict):
+                raise TypeError("Expected dict for folder")
             for filename_stem, (metadata, data) in result.items():
                 metadata_file = output_dir.joinpath(f"{filename_stem}_metadata.json")
                 data_file = output_dir.joinpath(f"{filename_stem}_data.json")
@@ -396,7 +408,7 @@ if __name__ == "__main__":
     path = Path(args.path)
 
     if not path.exists():
-        logger.error(f"Path not found: {path}")
+        logger.error("Path not found: %s", path)
         sys.exit(1)
 
     XLSXDataReader.save(path, args.output, save_cleaned=True, save_original=args.no_clean)

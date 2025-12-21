@@ -16,7 +16,7 @@ import numpy as np
 import xarray as xr
 import pandas as pd
 
-from .structures import (
+from echemistpy.core.structures import (
     RawData,
     RawDataInfo,
     Measurement,
@@ -43,13 +43,13 @@ def _create_entry(
     extra_meta: Optional[Dict[str, Any]] = None,
 ) -> Entry:
     """Wrap a dataset into an Entry with metadata.
-    
+
     Args:
         dataset: xarray Dataset containing the raw data
         path: Path to the source file
         technique: Measurement technique
         extra_meta: Additional metadata to include
-        
+
     Returns:
         Entry object with raw data and metadata populated,
         and other fields initialized as empty.
@@ -70,18 +70,11 @@ def _create_entry(
     # Note: We create empty Datasets for required data fields
     measurement = Measurement(data=xr.Dataset())
     measurement_info = MeasurementInfo()
-    
+
     analysis_result = AnalysisResult(data=xr.Dataset())
     analysis_result_info = AnalysisResultInfo()
 
-    return Entry(
-        raw_data=raw_data,
-        raw_data_info=raw_data_info,
-        measurement=measurement,
-        measurement_info=measurement_info,
-        analysis_result=analysis_result,
-        analysis_result_info=analysis_result_info
-    )
+    return Entry(raw_data=raw_data, raw_data_info=raw_data_info, measurement=measurement, measurement_info=measurement_info, analysis_result=analysis_result, analysis_result_info=analysis_result_info)
 
 
 def _structured_array_to_dataset(array: np.ndarray) -> xr.Dataset:
@@ -114,9 +107,7 @@ def _load_delimited(path: Path, *, delimiter: str, **kwargs: Any) -> Entry:
             else:
                 break
 
-    array = np.genfromtxt(
-        path, delimiter=delimiter, names=True, dtype=None, encoding=None, **kwargs
-    )
+    array = np.genfromtxt(path, delimiter=delimiter, names=True, dtype=None, encoding=None, **kwargs)
     dataset = _structured_array_to_dataset(array)
 
     extra_meta = {"header_comments": header_lines} if header_lines else {}
@@ -127,7 +118,7 @@ def _load_lanhe_ccs(path: Path, **kwargs: Any) -> Entry:
     """Load LANHE .ccs binary files using LanheReader plugin."""
     tag_filter = kwargs.pop("tag_filter", None)
     channel_filter = kwargs.pop("channel_filter", None)
-    
+
     from echemistpy.utils.external.echem.lanhe_reader import LanheReader
 
     reader = LanheReader(path)
@@ -148,46 +139,46 @@ def _load_biologic(path: Path, **kwargs: Any) -> Entry:
     reader = BiologicMPTReader()
     # Note: BiologicMPTReader might return RawMeasurement (old) or have been updated.
     # We assume it returns an object with .data (RawData) and .metadata (RawMetadata/Info)
-    # OR we might need to adapt it. 
-    # Since we cannot guarantee the reader is updated, we will try to use it 
+    # OR we might need to adapt it.
+    # Since we cannot guarantee the reader is updated, we will try to use it
     # and adapt the result if possible, or just use its internal logic if exposed.
-    
+
     # For now, assuming reader.read(path) returns something we can't easily use if it's the old class.
     # We will try to use the reader's internal methods if possible, or just wrap the result.
     # If the reader returns the old RawMeasurement, it will fail at runtime if that class is gone.
     # So we assume the user will update the reader or has updated it.
     # Here we will just call it and expect it to return something compatible or we catch it.
-    
+
     # FIXME: This depends on BiologicMPTReader being updated to return EChemEntry or similar.
-    # If it returns the old RawMeasurement, this will fail. 
+    # If it returns the old RawMeasurement, this will fail.
     # As a fallback, we can try to manually read if the reader exposes a to_dataset method.
-    
+
     # Let's assume for this task that we just need to update this file to use EChemEntry.
     # If the reader returns a dataset, we use _create_entry.
-    
+
     # If reader.read() returns the old object, we can't use it.
     # Let's try to see if we can just use the reader to get a dataset.
     # Looking at typical patterns, maybe reader.to_dataset()?
-    
+
     # Reverting to using the reader as is, but wrapping the result if it's a dataset.
     # If it's the old object, we might need to extract fields.
-    
+
     result = reader.read(path, **kwargs)
-    
+
     if isinstance(result, EChemEntry):
         return result
-    
+
     # If it's the old RawMeasurement (if it still exists in memory) or similar
-    if hasattr(result, 'data') and hasattr(result, 'metadata'):
+    if hasattr(result, "data") and hasattr(result, "metadata"):
         # Extract dataset and meta
-        dataset = result.data.data if hasattr(result.data, 'data') else result.data
-        meta = result.metadata.meta if hasattr(result.metadata, 'meta') else result.metadata
+        dataset = result.data.data if hasattr(result.data, "data") else result.data
+        meta = result.metadata.meta if hasattr(result.metadata, "meta") else result.metadata
         return _create_entry(dataset, path, technique="Echem/BioLogic", extra_meta=meta)
-        
+
     # If it's just a dataset
     if isinstance(result, xr.Dataset):
         return _create_entry(result, path, technique="Echem/BioLogic")
-        
+
     raise ValueError(f"Biologic loader returned unexpected type: {type(result)}")
 
 
@@ -243,38 +234,35 @@ _LOADER_TYPES: Dict[str, Loader] = {
 
 def _load(path: Path, fmt: Optional[str] = None, **kwargs: Any) -> Entry:
     """Unified loader function that dispatches to format-specific plugins.
-    
+
     Args:
         path: Path to the data file
         fmt: Optional format override (file extension without dot)
         **kwargs: Additional arguments passed to the specific loader plugin
-        
+
     Returns:
         Entry containing loaded data and metadata
-        
+
     Raises:
         ValueError: If file format is not supported
     """
     extension = (fmt or path.suffix.lstrip(".")).lower()
-    
+
     try:
         loader = _LOADER_TYPES[extension]
     except KeyError as exc:
-        raise ValueError(
-            f"Unsupported file extension '{extension}'. "
-            f"Supported formats: {', '.join(sorted(_LOADER_TYPES.keys()))}"
-        ) from exc
-    
+        raise ValueError(f"Unsupported file extension '{extension}'. Supported formats: {', '.join(sorted(_LOADER_TYPES.keys()))}") from exc
+
     return loader(path, **kwargs)
 
 
 def register_loader(extension: str, loader: Loader) -> None:
     """Register a custom loader plugin for a file extension.
-    
+
     Args:
         extension: File extension (without dot, e.g., 'xyz')
         loader: Loader function that takes (Path, **kwargs) and returns EChemEntry
-        
+
     Example:
         >>> def my_custom_loader(path: Path, **kwargs) -> EChemEntry:
         ...     # Custom loading logic
@@ -386,9 +374,7 @@ class DataStandardizer:
         self.dataset = dataset.copy(deep=True)
         self.technique = technique.lower()
 
-    def standardize_column_names(
-        self, custom_mapping: Optional[Dict[str, str]] = None
-    ) -> "DataStandardizer":
+    def standardize_column_names(self, custom_mapping: Optional[Dict[str, str]] = None) -> "DataStandardizer":
         """Standardize column names based on technique and custom mappings."""
         # Map specific techniques to general categories
         technique_category = self.technique
@@ -448,11 +434,7 @@ class DataStandardizer:
                     self.dataset = self.dataset.rename({var_name: new_name})
 
             # Handle voltage conversions
-            elif (
-                "voltage" in var_name.lower()
-                or "potential" in var_name.lower()
-                or var_name.startswith("E")
-            ):
+            elif "voltage" in var_name.lower() or "potential" in var_name.lower() or var_name.startswith("E"):
                 if "/mV" in var_name:
                     # Convert mV to V
                     self.dataset[var_name] = var_data / 1000
@@ -461,9 +443,7 @@ class DataStandardizer:
 
         return self
 
-    def ensure_required_columns(
-        self, required_columns: List[str]
-    ) -> "DataStandardizer":
+    def ensure_required_columns(self, required_columns: List[str]) -> "DataStandardizer":
         """Ensure that required columns exist, creating placeholders if needed."""
         missing_cols = []
         for col in required_columns:
@@ -505,9 +485,7 @@ class DataStandardizer:
             required = technique_requirements[self.technique]
             missing = [col for col in required if col not in self.dataset.data_vars]
             if missing:
-                issues["warnings"].append(
-                    f"Missing recommended columns for {self.technique}: {missing}"
-                )
+                issues["warnings"].append(f"Missing recommended columns for {self.technique}: {missing}")
 
         return issues
 
@@ -523,42 +501,26 @@ def detect_technique(dataset: xr.Dataset) -> str:
 
     # Check for electrochemistry patterns
     has_time = any("time" in col for col in columns_lower)
-    has_potential = any(
-        any(pot in col for pot in ["potential", "voltage", "ewe", " e ", " v "])
-        for col in columns_lower
-    )
-    has_current = any(
-        any(curr in col for curr in ["current", " i ", "ma", "amp"])
-        for col in columns_lower
-    )
+    has_potential = any(any(pot in col for pot in ["potential", "voltage", "ewe", " e ", " v "]) for col in columns_lower)
+    has_current = any(any(curr in col for curr in ["current", " i ", "ma", "amp"]) for col in columns_lower)
 
     if has_time and has_potential and has_current:
         return "electrochemistry"
 
     # Check for EIS patterns
     has_frequency = any("freq" in col for col in columns_lower)
-    has_impedance = any(
-        any(imp in col for imp in ["z", "impedance", "re_z", "im_z"])
-        for col in columns_lower
-    )
+    has_impedance = any(any(imp in col for imp in ["z", "impedance", "re_z", "im_z"]) for col in columns_lower)
     if has_frequency and has_impedance:
         return "eis"
 
     # Check for XRD patterns
-    has_angle = any(
-        any(ang in col for ang in ["2theta", "angle", "theta"])
-        for col in columns_lower
-    )
-    has_intensity = any(
-        "intensity" in col or "counts" in col for col in columns_lower
-    )
+    has_angle = any(any(ang in col for ang in ["2theta", "angle", "theta"]) for col in columns_lower)
+    has_intensity = any("intensity" in col or "counts" in col for col in columns_lower)
     if has_angle and has_intensity:
         return "xrd"
 
     # Check for XPS patterns
-    has_be = any(
-        "be" in col or "binding" in col or "energy" in col for col in columns_lower
-    )
+    has_be = any("be" in col or "binding" in col or "energy" in col for col in columns_lower)
     if has_be and has_intensity:
         return "xps"
 
@@ -593,16 +555,10 @@ def standardize_measurement(
     if isinstance(entry.raw_data.data, xr.Dataset):
         dataset = entry.raw_data.data
     else:
-        raise ValueError(
-            "RawData must contain an xarray.Dataset for standardization"
-        )
+        raise ValueError("RawData must contain an xarray.Dataset for standardization")
 
     # Determine technique
-    technique = (
-        technique_hint
-        or entry.raw_data_info.meta.get("technique")
-        or detect_technique(dataset)
-    )
+    technique = technique_hint or entry.raw_data_info.meta.get("technique") or detect_technique(dataset)
     if technique in ["Unknown", "unknown", "Table"]:
         technique = detect_technique(dataset)
 
@@ -636,7 +592,7 @@ def standardize_measurement(
     # Update the entry with standardized measurement
     entry.measurement = Measurement(data=standardized_dataset)
     entry.measurement_info = info
-    
+
     return entry
 
 

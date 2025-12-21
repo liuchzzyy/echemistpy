@@ -1,13 +1,32 @@
-"""Expose built-in analyzers and registries for convenience."""
+"""Expose built-in analyzers and registries (deprecated).
 
-from .echem import CyclicVoltammetryAnalyzer
-from .registry import TechniqueRegistry, create_default_registry
-from .tga import TGAAnalyzer
-from .xps import XPSAnalyzer
-from .xrd import XRDPowderAnalyzer
+This module is maintained for backward compatibility only.
+New code should use echemistpy.processing.analyzers instead.
+
+Example:
+    from echemistpy.processing.analyzers import TechniqueRegistry, create_default_registry
+"""
+
+# Backward compatibility: re-export from new locations
+from echemistpy.processing.analyzers import (
+    CyclicVoltammetryAnalyzer,
+    TechniqueRegistry,
+    create_default_registry,
+    TGAAnalyzer,
+    XPSAnalyzer,
+    XRDPowderAnalyzer,
+)
 
 __all__ = [
     "CyclicVoltammetryAnalyzer",
+    "TechniqueRegistry",
+    "create_default_registry",
+    "TGAAnalyzer",
+    "XPSAnalyzer",
+    "XRDPowderAnalyzer",
+]
+
+
     "TGAAnalyzer",
     "XPSAnalyzer",
     "XRDPowderAnalyzer",

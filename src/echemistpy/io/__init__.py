@@ -11,10 +11,12 @@ from .loaders import (
     DataStandardizer,
 )
 from .saver import save_measurement, save_results
-from .structures import (
-    Measurement, 
-    MeasurementInfo, 
-    RawData, 
+
+# Import core structures for backward compatibility
+from echemistpy.core.structures import (
+    Measurement,
+    MeasurementInfo,
+    RawData,
     RawDataInfo,
     AnalysisResult,
     AnalysisResultInfo,
