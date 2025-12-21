@@ -8,7 +8,7 @@ from typing import Any
 
 import numpy as np
 import xarray as xr
-from traitlets import HasTraits, Unicode, validate
+from traitlets import HasTraits, Unicode
 
 from echemistpy.io.plugin_specs import hookimpl
 from echemistpy.io.structures import RawData, RawDataInfo
@@ -21,14 +21,14 @@ logger = logging.getLogger(__name__)
 
 class LanheLoaderPlugin(HasTraits):
     """LANHE XLSX file loader plugin with traitlets parameter control.
-    
+
     This plugin wraps the XLSXDataReader to provide a pluggy-compatible
     interface for loading LANHE Excel files.
     """
 
     # Traitlets properties for configuration
     encoding = Unicode(default_value="utf-8", help="File encoding").tag(config=True)
-    
+
     def __init__(self, **kwargs):
         """Initialize the plugin with optional configuration."""
         super().__init__(**kwargs)
@@ -43,7 +43,7 @@ class LanheLoaderPlugin(HasTraits):
         """Check if this loader can handle the given file."""
         # Additional check: LANHE files typically have specific sheet names
         # For now, just check extension
-        return filepath.suffix.lower() in [".xlsx", ".xls"]
+        return filepath.suffix.lower() in {".xlsx", ".xls"}
 
     @hookimpl
     def load_file(
@@ -62,36 +62,36 @@ class LanheLoaderPlugin(HasTraits):
         """
         # Use the existing XLSXDataReader
         metadata, data_dict = XLSXDataReader.load(filepath)
-        
+
         # Convert data_dict to xarray.Dataset
         dataset = self._dict_to_dataset(data_dict)
-        
+
         # Create RawData and RawDataInfo
         raw_data = RawData(data=dataset)
         raw_data_info = RawDataInfo(meta=metadata)
-        
+
         return raw_data, raw_data_info
 
     @staticmethod
     def _dict_to_dataset(data_dict: dict[str, Any]) -> xr.Dataset:
         """Convert data dictionary to xarray.Dataset.
-        
+
         Args:
             data_dict: Dictionary with column names as keys and lists as values
-            
+
         Returns:
             xarray.Dataset with 'row' dimension
         """
         # Remove metadata from data_dict
         data_dict = {k: v for k, v in data_dict.items() if k != "_metadata"}
-        
+
         if not data_dict:
             return xr.Dataset()
-        
+
         # Get the length of data (assume all columns have same length)
         first_key = next(iter(data_dict.keys()))
         n_rows = len(data_dict[first_key])
-        
+
         # Create data variables
         data_vars = {}
         for name, values in data_dict.items():
@@ -99,13 +99,13 @@ class LanheLoaderPlugin(HasTraits):
             if not isinstance(values, np.ndarray):
                 values = np.array(values)
             data_vars[name] = ("row", values)
-        
+
         # Create dataset with row coordinate
         dataset = xr.Dataset(
             data_vars=data_vars,
             coords={"row": np.arange(n_rows)}
         )
-        
+
         return dataset
 
 

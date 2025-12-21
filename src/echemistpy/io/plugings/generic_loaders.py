@@ -31,7 +31,7 @@ class CSVLoaderPlugin(HasTraits):
     @hookimpl
     def can_load(self, filepath: Path) -> bool:
         """Check if this loader can handle the given file."""
-        return filepath.suffix.lower() in [".csv", ".txt", ".tsv"]
+        return filepath.suffix.lower() in {".csv", ".txt", ".tsv"}
 
     @hookimpl
     def load_file(
@@ -49,32 +49,32 @@ class CSVLoaderPlugin(HasTraits):
             Tuple of (RawData, RawDataInfo)
         """
         # Determine delimiter based on extension
-        if filepath.suffix.lower() == ".tsv":
-            delimiter = kwargs.get("delimiter", "\t")
-        elif filepath.suffix.lower() == ".txt":
-            delimiter = kwargs.get("delimiter", "\t")
-        else:
-            delimiter = kwargs.get("delimiter", self.delimiter)
+        delimiter = kwargs.get("delimiter", "\t") if filepath.suffix.lower() == ".tsv" or filepath.suffix.lower() == ".txt" else kwargs.get("delimiter", self.delimiter)
 
         encoding = kwargs.get("encoding", self.encoding)
 
-        # Read header lines to capture potential metadata
+        # Count header comment lines to skip
         header_lines = []
+        skip_lines = 0
         with open(filepath, "r", encoding=encoding, errors="ignore") as f:
-            for _ in range(10):  # Read first 10 lines to check for comments
+            for _ in range(100):  # Read up to 100 lines to check for comments
                 line = f.readline()
+                if not line:
+                    break
                 if line.strip().startswith("#") or line.strip().startswith("%"):
                     header_lines.append(line.strip())
+                    skip_lines += 1
                 else:
                     break
 
-        # Load data using numpy
+        # Load data using numpy, skipping comment lines
         array = np.genfromtxt(
             filepath,
             delimiter=delimiter,
             names=True,
             dtype=None,
             encoding=encoding,
+            skip_header=skip_lines,  # Skip the comment lines
         )
 
         # Convert to dataset
@@ -124,7 +124,7 @@ class ExcelLoaderPlugin(HasTraits):
     def can_load(self, filepath: Path) -> bool:
         """Check if this loader can handle the given file."""
         # This is a generic Excel loader - lower priority than LANHE
-        return filepath.suffix.lower() in [".xlsx", ".xls"]
+        return filepath.suffix.lower() in {".xlsx", ".xls"}
 
     @hookimpl
     def load_file(
@@ -179,7 +179,7 @@ class HDF5LoaderPlugin(HasTraits):
     @hookimpl
     def can_load(self, filepath: Path) -> bool:
         """Check if this loader can handle the given file."""
-        return filepath.suffix.lower() in [".h5", ".hdf5", ".hdf", ".nc", ".nc4", ".netcdf"]
+        return filepath.suffix.lower() in {".h5", ".hdf5", ".hdf", ".nc", ".nc4", ".netcdf"}
 
     @hookimpl
     def load_file(

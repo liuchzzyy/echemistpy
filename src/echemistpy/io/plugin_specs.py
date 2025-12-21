@@ -102,6 +102,6 @@ class SaverSpec:
 __all__ = [
     "LoaderSpec",
     "SaverSpec",
-    "hookspec",
     "hookimpl",
+    "hookspec",
 ]

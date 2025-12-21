@@ -13,7 +13,7 @@ import xarray as xr
 from scipy.signal import find_peaks
 from scipy.integrate import simpson
 
-from echemistpy.core.structures import Measurement, AnalysisResult
+from echemistpy.io.structures import Measurement, AnalysisResult
 
 
 def find_peaks_in_measurement(

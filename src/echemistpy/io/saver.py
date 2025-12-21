@@ -5,15 +5,13 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Optional
 
-import xarray as xr
-
+from echemistpy.io.plugin_manager import get_plugin_manager
 from echemistpy.io.structures import (
-    Measurement,
-    MeasurementInfo,
     AnalysisResult,
     AnalysisResultInfo,
+    Measurement,
+    MeasurementInfo,
 )
-from echemistpy.io.plugin_manager import get_plugin_manager
 
 
 def save_measurement(
@@ -34,10 +32,10 @@ def save_measurement(
         **kwargs: Additional arguments for the saver.
     """
     destination = Path(path)
-    
+
     # Convert MeasurementInfo to metadata dict
     metadata = info.to_dict()
-    
+
     # Use plugin manager to save
     pm = get_plugin_manager()
     pm.save_data(measurement.data, metadata, destination, fmt=fmt, **kwargs)
@@ -66,14 +64,14 @@ def save_results(
     """
     destination = Path(path)
     extension = (fmt or destination.suffix.lstrip(".")).lower()
-    
+
     # Convert info to metadata dict
     results_metadata = results_info.to_dict()
-    
+
     # For HDF5/NetCDF formats, we can save multiple groups
-    if extension in ["h5", "hdf5", "hdf", "nc", "nc4", "netcdf"]:
+    if extension in {"h5", "hdf5", "hdf", "nc", "nc4", "netcdf"}:
         import json
-        
+
         # If measurement is provided, save it first
         if measurement and measurement_info:
             meas_dataset = measurement.data.copy()
@@ -81,20 +79,20 @@ def save_results(
             rename_dict = {name: name.replace("/", "_") for name in meas_dataset.data_vars if "/" in name}
             if rename_dict:
                 meas_dataset = meas_dataset.rename(rename_dict)
-            
+
             meas_metadata = measurement_info.to_dict()
             meas_dataset.attrs["echemistpy_metadata"] = json.dumps(meas_metadata)
             meas_dataset.to_netcdf(destination, group="measurement", mode="w", engine="h5netcdf")
             mode = "a"
         else:
             mode = "w"
-        
+
         # Save results
         res_dataset = results.data.copy()
         rename_dict = {name: name.replace("/", "_") for name in res_dataset.data_vars if "/" in name}
         if rename_dict:
             res_dataset = res_dataset.rename(rename_dict)
-        
+
         res_dataset.attrs["echemistpy_results_metadata"] = json.dumps(results_metadata)
         res_dataset.to_netcdf(destination, group="results", mode=mode, engine="h5netcdf")
     else:

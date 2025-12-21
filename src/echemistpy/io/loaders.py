@@ -10,21 +10,18 @@ from __future__ import annotations
 
 import warnings
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import numpy as np
 import xarray as xr
-import pandas as pd
 
+from echemistpy.io.plugin_manager import get_plugin_manager
 from echemistpy.io.structures import (
-    RawData,
-    RawDataInfo,
     Measurement,
     MeasurementInfo,
-    AnalysisResult,
-    AnalysisResultInfo,
+    RawData,
+    RawDataInfo,
 )
-from echemistpy.io.plugin_manager import get_plugin_manager
 
 # Type alias for backward compatibility
 Loader = Callable[[Path, Any], Tuple[RawData, RawDataInfo]]
@@ -38,12 +35,12 @@ Loader = Callable[[Path, Any], Tuple[RawData, RawDataInfo]]
 def _initialize_default_plugins() -> None:
     """Initialize and register default loader and saver plugins."""
     pm = get_plugin_manager()
-    
+
     # Register echem-specific plugins
     from echemistpy.io.plugings.echem import BiologicLoaderPlugin, LanheLoaderPlugin
     pm.register_plugin(BiologicLoaderPlugin(), name="biologic")
     pm.register_plugin(LanheLoaderPlugin(), name="lanhe")
-    
+
     # Register generic format plugins
     from echemistpy.io.plugings.generic_loaders import (
         CSVLoaderPlugin,
@@ -53,7 +50,7 @@ def _initialize_default_plugins() -> None:
     pm.register_plugin(CSVLoaderPlugin(), name="csv")
     pm.register_plugin(ExcelLoaderPlugin(), name="excel")
     pm.register_plugin(HDF5LoaderPlugin(), name="hdf5")
-    
+
     # Register saver plugins
     from echemistpy.io.plugings.generic_savers import (
         CSVSaverPlugin,
@@ -102,12 +99,12 @@ def register_loader(plugin: Any, name: Optional[str] = None) -> None:
     Example:
         >>> from echemistpy.io.plugin_specs import hookimpl
         >>> from traitlets import HasTraits
-        >>> 
+        >>>
         >>> class MyLoaderPlugin(HasTraits):
         ...     @hookimpl
         ...     def get_supported_extensions(self):
         ...         return ["xyz"]
-        ...     
+        ...
         ...     @hookimpl
         ...     def load_file(self, filepath, **kwargs):
         ...         # Custom loading logic
@@ -115,7 +112,7 @@ def register_loader(plugin: Any, name: Optional[str] = None) -> None:
         ...         raw_data = RawData(data=dataset)
         ...         raw_data_info = RawDataInfo(meta={"technique": "Custom"})
         ...         return raw_data, raw_data_info
-        >>> 
+        >>>
         >>> register_loader(MyLoaderPlugin(), name="my_loader")
     """
     pm = get_plugin_manager()
@@ -227,14 +224,11 @@ class DataStandardizer:
         """Standardize column names based on technique and custom mappings."""
         # Map specific techniques to general categories
         technique_category = self.technique
-        if self.technique in ["cv", "gcd", "eis", "ca", "cp", "lsjv", "echem", "ec"]:
+        if self.technique in {"cv", "gcd", "eis", "ca", "cp", "lsjv", "echem", "ec"}:
             technique_category = "electrochemistry"
 
         # Get standard mapping for technique
-        if technique_category in self.STANDARD_MAPPINGS:
-            mapping = self.STANDARD_MAPPINGS[technique_category].copy()
-        else:
-            mapping = {}
+        mapping = self.STANDARD_MAPPINGS[technique_category].copy() if technique_category in self.STANDARD_MAPPINGS else {}
 
         # Add custom mappings if provided
         if custom_mapping:
@@ -283,12 +277,11 @@ class DataStandardizer:
                     self.dataset = self.dataset.rename({var_name: new_name})
 
             # Handle voltage conversions
-            elif "voltage" in var_name.lower() or "potential" in var_name.lower() or var_name.startswith("E"):
-                if "/mV" in var_name:
-                    # Convert mV to V
-                    self.dataset[var_name] = var_data / 1000
-                    new_name = var_name.replace("/mV", "/V")
-                    self.dataset = self.dataset.rename({var_name: new_name})
+            elif ("voltage" in var_name.lower() or "potential" in var_name.lower() or var_name.startswith("E")) and "/mV" in var_name:
+                # Convert mV to V
+                self.dataset[var_name] = var_data / 1000
+                new_name = var_name.replace("/mV", "/V")
+                self.dataset = self.dataset.rename({var_name: new_name})
 
         return self
 
@@ -410,7 +403,7 @@ def standardize_measurement(
 
     # Determine technique
     technique = technique_hint or raw_data_info.get("technique") or detect_technique(dataset)
-    if technique in ["Unknown", "unknown", "Table"]:
+    if technique in {"Unknown", "unknown", "Table"}:
         technique = detect_technique(dataset)
 
     # Standardize data
@@ -465,7 +458,7 @@ def get_file_info(path: str | Path) -> Dict[str, Any]:
     path = Path(path)
     pm = get_plugin_manager()
     supported_extensions = list(pm.get_supported_loaders().keys())
-    
+
     info = {
         "path": str(path),
         "name": path.name,
@@ -480,7 +473,7 @@ def get_file_info(path: str | Path) -> Dict[str, Any]:
 
     # Try to get column information for supported formats
     try:
-        if info["extension"] in [".csv", ".tsv"]:
+        if info["extension"] in {".csv", ".tsv"}:
             # Read just the header
             with open(path, "r", encoding="utf-8", errors="ignore") as f:
                 first_line = f.readline().strip()
@@ -500,7 +493,7 @@ def list_supported_formats() -> Dict[str, str]:
     """Return a dictionary of supported file formats and their descriptions."""
     pm = get_plugin_manager()
     loaders = pm.get_supported_loaders()
-    
+
     # Group by plugin type
     formats = {}
     for ext, plugin_name in loaders.items():
@@ -516,26 +509,26 @@ def list_supported_formats() -> Dict[str, str]:
             formats[ext] = "HDF5/NetCDF format"
         else:
             formats[ext] = f"Loaded by {plugin_name}"
-    
+
     return formats
 
 
 __all__ = [
-    # Loading functions
-    "register_loader",
-    "load_data_file",
-    "load_table",
-    # Standardization
-    "standardize_measurement",
     "DataStandardizer",
+    # Type alias
+    "Loader",
     "detect_technique",
     # Utilities
     "get_file_info",
-    "list_supported_formats",
     # Plugin management
     "get_plugin_manager",
-    # Type alias
-    "Loader",
+    "list_supported_formats",
+    "load_data_file",
+    "load_table",
+    # Loading functions
+    "register_loader",
+    # Standardization
+    "standardize_measurement",
 ]
 
 # Public aliases for backward compatibility

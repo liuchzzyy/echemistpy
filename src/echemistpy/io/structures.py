@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from functools import cached_property
-from typing import Any, Iterator, MutableMapping, Optional
+from typing import Any, Optional
 
 import pandas as pd
 import xarray as xr
@@ -96,7 +96,7 @@ class MetadataInfoMixin:
             container = self.others
 
         for key, value in other.items():
-            if key in field_names and key not in ["meta", "parameters", "others"]:
+            if key in field_names and key not in {"meta", "parameters", "others"}:
                 setattr(self, key, value)
             elif container is not None:
                 container[key] = value
@@ -301,10 +301,10 @@ class AnalysisResult(XarrayDataMixin):
 
 
 __all__ = [
-    "RawData",
-    "RawDataInfo",
-    "Measurement",
-    "MeasurementInfo",
     "AnalysisResult",
     "AnalysisResultInfo",
+    "Measurement",
+    "MeasurementInfo",
+    "RawData",
+    "RawDataInfo",
 ]

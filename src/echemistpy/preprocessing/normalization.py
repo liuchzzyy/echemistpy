@@ -7,7 +7,7 @@ from typing import Optional
 import numpy as np
 import xarray as xr
 
-from echemistpy.core.structures import Measurement
+from echemistpy.io.structures import Measurement
 
 
 def normalize_min_max(measurement: Measurement, variable: str, feature_range: tuple[float, float] = (0, 1)) -> Measurement:

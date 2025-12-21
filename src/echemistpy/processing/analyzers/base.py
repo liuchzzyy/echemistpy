@@ -7,7 +7,7 @@ from typing import Any, Dict
 
 import xarray as xr
 
-from echemistpy.core.structures import AnalysisResult, Measurement
+from echemistpy.io.structures import AnalysisResult, Measurement
 
 
 class TechniqueAnalyzer(ABC):

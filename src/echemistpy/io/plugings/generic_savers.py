@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import csv
 import json
 import logging
@@ -47,12 +48,7 @@ class CSVSaverPlugin(HasTraits):
             **kwargs: Additional parameters
         """
         # Determine delimiter
-        if fmt == "tsv" or filepath.suffix.lower() == ".tsv":
-            delimiter = kwargs.get("delimiter", "\t")
-        elif fmt == "txt" or filepath.suffix.lower() == ".txt":
-            delimiter = kwargs.get("delimiter", "\t")
-        else:
-            delimiter = kwargs.get("delimiter", self.delimiter)
+        delimiter = kwargs.get("delimiter", "\t") if fmt == "tsv" or filepath.suffix.lower() == ".tsv" or fmt == "txt" or filepath.suffix.lower() == ".txt" else kwargs.get("delimiter", self.delimiter)
 
         encoding = kwargs.get("encoding", self.encoding)
         newline = kwargs.get("newline", "\n")
@@ -154,20 +150,14 @@ class HDF5SaverPlugin(HasTraits):
             dataset = dataset.rename(rename_dict)
 
         # Add metadata as attributes
+        # Serialize the entire metadata as JSON for safety
         dataset.attrs["echemistpy_metadata"] = json.dumps(metadata)
 
-        if "technique" in metadata:
-            dataset.attrs["technique"] = str(metadata["technique"])
-        if "sample_name" in metadata:
-            dataset.attrs["sample_name"] = str(metadata["sample_name"])
-
-        # Add other metadata fields
+        # Also add individual top-level metadata fields if they're simple types
         for k, v in metadata.items():
-            if k not in dataset.attrs and k not in ["technique", "sample_name"]:
-                try:
+            if k not in dataset.attrs and isinstance(v, (str, int, float, bool)):
+                with contextlib.suppress(Exception):
                     dataset.attrs[k] = v
-                except Exception:
-                    dataset.attrs[k] = str(v)
 
         # Save to file
         dataset.to_netcdf(filepath, engine=engine, **kwargs)
