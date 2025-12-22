@@ -1,103 +1,74 @@
-"""Plugin manager for echemistpy io system using pluggy.
+"""Simple plugin registry for echemistpy io system.
 
-This module provides the plugin manager that discovers and manages
-loader and saver plugins.
+This module provides a simple registry to manage loader and saver plugins
+without external dependencies like pluggy.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Dict, Optional, Type
 
-import pluggy
-import xarray as xr
-
-from echemistpy.io.plugin_specs import LoaderSpec, SaverSpec
 from echemistpy.io.structures import RawData, RawDataInfo
 
 
 class IOPluginManager:
-    """Manager for io plugins using pluggy."""
+    """Simple registry for io plugins."""
 
     def __init__(self):
         """Initialize the plugin manager."""
-        self.pm = pluggy.PluginManager("echemistpy_io")
-        self.pm.add_hookspecs(LoaderSpec)
-        self.pm.add_hookspecs(SaverSpec)
-        self._loaders: dict[str, Any] = {}
-        self._savers: dict[str, Any] = {}
+        self._loaders: Dict[str, Any] = {}
+        self._savers: Dict[str, Any] = {}
 
-    def register_plugin(self, plugin: Any, name: Optional[str] = None) -> None:
-        """Register a plugin.
+    def register_loader(self, extensions: list[str], loader_class: Any) -> None:
+        """Register a loader class for specific extensions.
 
         Args:
-            plugin: Plugin instance or module
-            name: Optional plugin name
+            extensions: List of file extensions (e.g., ['mpt', 'mpr'])
+            loader_class: The class or factory to handle these files
         """
-        # Check if plugin is already registered by checking existing plugins
-        if name:
-            existing_plugins = dict(self.pm.list_name_plugin())
-            if name in existing_plugins:
-                # Unregister the old plugin with this name
-                old_plugin = existing_plugins[name]
-                if old_plugin is not None:
-                    self.pm.unregister(old_plugin)
-        
-        self.pm.register(plugin, name=name)
-        self._refresh_mappings()
+        for ext in extensions:
+            ext = ext.lower()
+            if not ext.startswith("."):
+                ext = f".{ext}"
+            self._loaders[ext] = loader_class
 
-    def unregister_plugin(self, plugin: Any) -> None:
-        """Unregister a plugin.
+    def register_saver(self, formats: list[str], saver_class: Any) -> None:
+        """Register a saver class for specific formats.
 
         Args:
-            plugin: Plugin instance or module to unregister
+            formats: List of format names (e.g., ['csv', 'json'])
+            saver_class: The class or factory to handle saving
         """
-        self.pm.unregister(plugin)
-        self._refresh_mappings()
+        for fmt in formats:
+            self._savers[fmt.lower()] = saver_class
 
-    def _refresh_mappings(self) -> None:
-        """Refresh the extension to loader and format to saver mappings."""
-        self._loaders.clear()
-        self._savers.clear()
+    def get_loader(self, extension: str) -> Optional[Any]:
+        """Get the loader for a given extension."""
+        ext = extension.lower()
+        if not ext.startswith("."):
+            ext = f".{ext}"
+        return self._loaders.get(ext)
 
-        # Build loader mappings
-        for plugin in self.pm.get_plugins():
-            if hasattr(plugin, "get_supported_extensions"):
-                try:
-                    extensions = plugin.get_supported_extensions()
-                    for ext in extensions:
-                        self._loaders[ext.lower()] = plugin
-                except Exception:
-                    pass
+    def get_saver(self, fmt: str) -> Optional[Any]:
+        """Get the saver for a given format."""
+        return self._savers.get(fmt.lower())
 
-            if hasattr(plugin, "get_supported_formats"):
-                try:
-                    formats = plugin.get_supported_formats()
-                    for fmt in formats:
-                        self._savers[fmt.lower()] = plugin
-                except Exception:
-                    pass
+    def list_supported_extensions(self) -> list[str]:
+        """List all supported file extensions."""
+        return list(self._loaders.keys())
 
-    def load_file(
-        self,
-        filepath: str | Path,
-        fmt: Optional[str] = None,
-        **kwargs: Any,
-    ) -> tuple[RawData, RawDataInfo]:
-        """Load a file using the appropriate plugin.
 
-        Args:
-            filepath: Path to the file to load
-            fmt: Optional format override (file extension without dot)
-            **kwargs: Additional arguments passed to the loader plugin
+# Global instance
+_instance = None
 
-        Returns:
-            Tuple of (RawData, RawDataInfo)
 
-        Raises:
-            ValueError: If no loader is found for the file format
-        """
-        filepath = Path(filepath)
+def get_plugin_manager() -> IOPluginManager:
+    """Get or create the global plugin manager instance."""
+    global _instance
+    if _instance is None:
+        _instance = IOPluginManager()
+    return _instance
         extension = (fmt or filepath.suffix.lstrip(".")).lower()
 
         if extension not in self._loaders:

@@ -1,103 +1,102 @@
 """Unified file saving interface for scientific measurements.
 
-This module provides a simplified interface for saving data using the plugin
-system. It automatically selects the appropriate plugin based on file extension.
+This module provides a simplified interface for saving data.
+It supports common formats like CSV, JSON, and NetCDF/HDF5.
 """
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any, Optional
 
-from echemistpy.io.plugin_manager import get_plugin_manager
+import xarray as xr
+
 from echemistpy.io.structures import (
     AnalysisResult,
-    AnalysisResultInfo,
     Measurement,
-    MeasurementInfo,
 )
 
 
-def save(
-    measurement: Measurement,
-    info: MeasurementInfo,
+def save_dataset(
+    dataset: xr.Dataset,
     path: str | Path,
-    *,
     fmt: Optional[str] = None,
     **kwargs: Any,
 ) -> None:
-    """Save a Measurement and its Info to disk using the plugin system.
+    """Save an xarray.Dataset to disk.
 
     Args:
-        measurement: The Measurement object to save
-        info: The MeasurementInfo object
+        dataset: The xarray.Dataset to save
         path: Destination path
-        fmt: Optional format override (csv, nc, h5, json)
-        **kwargs: Additional arguments for the saver plugin
-
-    Example:
-        >>> save(measurement, info, "output.csv")
-        >>> save(measurement, info, "output.h5", fmt="hdf5")
+        fmt: Optional format override ('csv', 'nc', 'h5', 'json')
+        **kwargs: Additional arguments for the specific saver
     """
-    destination = Path(path)
+    path = Path(path)
+    ext = fmt.lower() if fmt else path.suffix.lower().lstrip(".")
 
-    # Convert MeasurementInfo to metadata dict
-    metadata = info.to_dict()
+    if ext in {"csv", "txt", "tsv"}:
+        # Convert to pandas and save
+        sep = "\t" if ext == "tsv" else ","
+        df = dataset.to_dataframe()
+        # If it's a simple 1D dataset with 'row' dimension, we might want to reset index
+        if "row" in df.index.names:
+            df = df.reset_index(drop=True)
+        df.to_csv(path, sep=sep, index=False, **kwargs)
 
-    # Use plugin manager to save
-    pm = get_plugin_manager()
-    pm.save_data(measurement.data, metadata, destination, fmt=fmt, **kwargs)
+    elif ext in {"nc", "netcdf", "h5", "hdf5"}:
+        # Save as NetCDF (standard for xarray)
+        dataset.to_netcdf(path, **kwargs)
+
+    elif ext == "json":
+        # Save as JSON (useful for metadata or small datasets)
+        data_dict = dataset.to_dict()
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data_dict, f, indent=4, ensure_ascii=False)
+
+    else:
+        raise ValueError(f"Unsupported save format: {ext}")
 
 
 def save_measurement(
     measurement: Measurement,
-    info: MeasurementInfo,
     path: str | Path,
-    *,
     fmt: Optional[str] = None,
     **kwargs: Any,
 ) -> None:
-    """Save a Measurement and its Info to disk (alias for save()).
+    """Save a Measurement object to disk.
 
     Args:
         measurement: The Measurement object to save
-        info: The MeasurementInfo object
         path: Destination path
-        fmt: Optional format override (csv, nc, h5, json)
-        **kwargs: Additional arguments for the saver plugin
+        fmt: Optional format override
     """
-    save(measurement, info, path, fmt=fmt, **kwargs)
+    # We save the underlying xarray dataset
+    # Metadata is typically stored in dataset.attrs or separately
+    save_dataset(measurement.data, path, fmt=fmt, **kwargs)
 
 
-def save_results(
-    results: AnalysisResult,
-    results_info: AnalysisResultInfo,
+def save_analysis_result(
+    result: AnalysisResult,
     path: str | Path,
-    measurement: Optional[Measurement] = None,
-    measurement_info: Optional[MeasurementInfo] = None,
-    *,
     fmt: Optional[str] = None,
     **kwargs: Any,
 ) -> None:
-    """Save AnalysisResult (and optionally original Measurement) to disk.
+    """Save an AnalysisResult object to disk.
 
     Args:
-        results: The AnalysisResult object to save
-        results_info: The AnalysisResultInfo object
+        result: The AnalysisResult object to save
         path: Destination path
-        measurement: Optional original Measurement to include
-        measurement_info: Optional original MeasurementInfo to include
         fmt: Optional format override
-        **kwargs: Additional arguments for the saver plugin
     """
-    destination = Path(path)
-    extension = (fmt or destination.suffix.lstrip(".")).lower()
+    save_dataset(result.data, path, fmt=fmt, **kwargs)
 
-    # Convert info to metadata dict
-    results_metadata = results_info.to_dict()
 
-    # For HDF5/NetCDF formats, we can save multiple groups
-    if extension in {"h5", "hdf5", "hdf", "nc", "nc4", "netcdf"}:
+__all__ = [
+    "save_dataset",
+    "save_measurement",
+    "save_analysis_result",
+]
         import json
 
         # If measurement is provided, save it first
