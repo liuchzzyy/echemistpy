@@ -8,24 +8,24 @@ and techniques.
 from __future__ import annotations
 
 import warnings
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, ClassVar, Dict, List, Optional, Tuple
 
 import numpy as np
 import xarray as xr
 
 from echemistpy.io.structures import (
-    Measurement,
-    MeasurementInfo,
+    SummaryData,
+    SummaryDataInfo,
     RawData,
     RawDataInfo,
 )
 
 
 class DataStandardizer:
-    """Standardize measurement data to echemistpy analysis format."""
+    """Standardize raw data to echemistpy summary format."""
 
     # Standard column name mappings for different techniques
-    STANDARD_MAPPINGS = {
+    STANDARD_MAPPINGS: ClassVar[dict[str, dict[str, str]]] = {
         "electrochemistry": {
             # Time variants
             "time": "Time/s",
@@ -175,10 +175,10 @@ class DataStandardizer:
                     self.dataset[var_name] = var_data * 1000
                     new_name = var_name.replace("/A", "/mA").replace("_A", "_mA")
                     self.dataset = self.dataset.rename({var_name: new_name})
-                elif "/µA" in var_name or "/uA" in var_name:
-                    # Convert µA to mA
+                elif "/μA" in var_name or "/uA" in var_name:
+                    # Convert μA to mA
                     self.dataset[var_name] = var_data / 1000
-                    new_name = var_name.replace("/µA", "/mA").replace("/uA", "/mA")
+                    new_name = var_name.replace("/μA", "/mA").replace("/uA", "/mA")
                     self.dataset = self.dataset.rename({var_name: new_name})
 
             # Handle voltage conversions
@@ -242,7 +242,7 @@ class DataStandardizer:
 
 
 def detect_technique(dataset: xr.Dataset) -> str:
-    """Auto-detect measurement technique based on column names and data patterns."""
+    """Auto-detect technique based on column names and data patterns."""
     columns = list(dataset.data_vars.keys())
     columns_lower = [str(col).lower() for col in columns]
 
@@ -281,14 +281,14 @@ def detect_technique(dataset: xr.Dataset) -> str:
     return "unknown"
 
 
-def standardize_measurement(
+def standardize_rawdata(
     raw_data: RawData,
     raw_data_info: RawDataInfo,
     technique_hint: Optional[str] = None,
     custom_mapping: Optional[Dict[str, str]] = None,
     required_columns: Optional[List[str]] = None,
-) -> Tuple[Measurement, MeasurementInfo]:
-    """Standardize raw data to measurement format.
+) -> Tuple[SummaryData, SummaryDataInfo]:
+    """Standardize raw data to summary format.
 
     Args:
         raw_data: Input raw data
@@ -298,7 +298,7 @@ def standardize_measurement(
         required_columns: List of columns that must be present
 
     Returns:
-        Tuple of (Measurement, MeasurementInfo) with standardized data
+        Tuple of (SummaryData, SummaryDataInfo) with standardized data
     """
     # Extract dataset from RawData
     if isinstance(raw_data.data, xr.Dataset):
@@ -327,10 +327,10 @@ def standardize_measurement(
 
     standardized_dataset = standardizer.get_dataset()
 
-    # Create MeasurementInfo
+    # Create SummaryDataInfo
     raw_meta = raw_data_info.meta
 
-    info = MeasurementInfo(
+    info = SummaryDataInfo(
         others={
             "technique": technique,
             "sample_name": raw_meta.get("filename", "Unknown"),
@@ -340,14 +340,14 @@ def standardize_measurement(
         }
     )
 
-    # Create Measurement
-    measurement = Measurement(data=standardized_dataset)
+    # Create SummaryData
+    summary_data = SummaryData(data=standardized_dataset)
 
-    return measurement, info
+    return summary_data, info
 
 
 __all__ = [
     "DataStandardizer",
     "detect_technique",
-    "standardize_measurement",
+    "standardize_rawdata",
 ]

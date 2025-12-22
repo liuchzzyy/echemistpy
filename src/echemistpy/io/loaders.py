@@ -1,4 +1,4 @@
-"""Unified file loading interface for scientific measurements.
+"""Unified file loading interface for scientific data.
 
 This module provides a simplified interface for loading data files.
 It automatically detects file formats and delegates loading to the
@@ -13,19 +13,30 @@ from typing import TYPE_CHECKING, Any, Dict, Optional, Tuple
 from echemistpy.io.plugin_manager import get_plugin_manager
 from echemistpy.io.standardizer import (
     detect_technique,
-    standardize_measurement,
+    standardize_rawdata,
 )
 from echemistpy.io.structures import (
-    Measurement,
     RawData,
     RawDataInfo,
+    SummaryData,
 )
+
+# Import default plugins
+try:
+    from echemistpy.io.plugins.echem.BiologicMPTReader import BiologicMPTReader
+except ImportError:
+    BiologicMPTReader = None  # type: ignore
+
+try:
+    from echemistpy.io.plugins.echem.LanheXLSXReader import LanheXLSXReader
+except ImportError:
+    LanheXLSXReader = None  # type: ignore
 
 if TYPE_CHECKING:
     pass
 
 
-def load_data_file(path: str | Path, fmt: Optional[str] = None, **kwargs: Any) -> Tuple[RawData, RawDataInfo]:
+def load(path: str | Path, fmt: Optional[str] = None, **kwargs: Any) -> Tuple[RawData, RawDataInfo]:
     """Load a raw data file and return RawData and RawDataInfo.
 
     Args:
@@ -53,17 +64,17 @@ def load_data_file(path: str | Path, fmt: Optional[str] = None, **kwargs: Any) -
     raise RuntimeError(f"Reader class {reader_class.__name__} does not implement 'load' method")
 
 
-def load_measurement(path: str | Path, technique: Optional[str] = None, **kwargs: Any) -> Tuple[Measurement, Any]:
-    """Load a file and return a standardized Measurement object.
+def load_summary(path: str | Path, technique: Optional[str] = None, **kwargs: Any) -> Tuple[SummaryData, Any]:
+    """Load a file and return a standardized SummaryData object.
 
     This is the high-level function that combines loading and standardization.
     """
-    raw_data, raw_info = load_data_file(path, **kwargs)
+    raw_data, raw_info = load(path, **kwargs)
 
     if technique is None:
         technique = detect_technique(raw_data.data)
 
-    return standardize_measurement(raw_data, raw_info, technique_hint=technique)
+    return standardize_rawdata(raw_data, raw_info, technique_hint=technique)
 
 
 def register_loader(extensions: list[str], loader_class: Any) -> None:
@@ -153,34 +164,21 @@ def list_supported_formats() -> Dict[str, str]:
 # Plugin System Initialization
 # ============================================================================
 
-_plugins_initialized = False
-
 
 def _initialize_default_plugins() -> None:
     """Initialize and register default loader and saver plugins."""
-    global _plugins_initialized
-
-    if _plugins_initialized:
+    pm = get_plugin_manager()
+    if pm.initialized:
         return
 
-    pm = get_plugin_manager()
-
     # Register echem-specific plugins
-    try:
-        from echemistpy.io.plugins.echem.BiologicMPTReader import BiologicMPTReader
-
+    if BiologicMPTReader is not None:
         pm.register_loader([".mpt", ".mpr"], BiologicMPTReader)
-    except ImportError:
-        pass
 
-    try:
-        from echemistpy.io.plugins.echem.LanheXLSXReader import LanheXLSXReader
-
+    if LanheXLSXReader is not None:
         pm.register_loader([".xlsx", ".ccs"], LanheXLSXReader)
-    except ImportError:
-        pass
 
-    _plugins_initialized = True
+    pm.initialized = True
 
 
 # Initialize plugins on module import
@@ -192,12 +190,8 @@ __all__ = [
     "get_file_info",
     "get_plugin_manager",
     "list_supported_formats",
-    "load_data_file",
-    "load_measurement",
+    "load",
+    "load_summary",
     "register_loader",
-    "standardize_measurement",
+    "standardize_rawdata",
 ]
-
-# Backward compatibility aliases
-load = load_data_file
-load_table = load_data_file

@@ -19,13 +19,13 @@ class XRDPowderAnalyzer(TechniqueAnalyzer):
     def required_columns(self) -> tuple[str, ...]:
         return ("2theta", "intensity")
 
-    def preprocess(self, measurement):
-        measurement.data = measurement.data.sortby("2theta")
-        measurement.data["intensity"] = measurement.data["intensity"].clip(min=0)
-        return measurement
+    def preprocess(self, summary_data):
+        summary_data.data = summary_data.data.sortby("2theta")
+        summary_data.data["intensity"] = summary_data.data["intensity"].clip(min=0)
+        return summary_data
 
-    def compute(self, measurement) -> tuple[Dict[str, Any], Dict[str, xr.Dataset]]:
-        data = measurement.data
+    def compute(self, summary_data) -> tuple[Dict[str, Any], Dict[str, xr.Dataset]]:
+        data = summary_data.data
         dim = data["intensity"].dims[0]
         theta = data["2theta"].values
         intensity = data["intensity"].values

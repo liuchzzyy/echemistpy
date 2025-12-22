@@ -7,7 +7,7 @@ from typing import Any, Dict
 
 import xarray as xr
 
-from echemistpy.io.structures import AnalysisResult, Measurement
+from echemistpy.io.structures import AnalysisResult, SummaryData
 
 
 class TechniqueAnalyzer(ABC):
@@ -18,8 +18,8 @@ class TechniqueAnalyzer(ABC):
     def __init__(self, *, name: str | None = None) -> None:
         self.name = name or self.__class__.__name__
 
-    def analyze(self, measurement: Measurement) -> AnalysisResult:
-        cleaned = self.preprocess(measurement.copy())
+    def analyze(self, summary_data: SummaryData) -> AnalysisResult:
+        cleaned = self.preprocess(summary_data.copy())
         summary, tables = self.compute(cleaned)
         return AnalysisResult(
             data=xr.Dataset(),  # Initialize with empty dataset
@@ -28,11 +28,11 @@ class TechniqueAnalyzer(ABC):
     @property
     @abstractmethod
     def required_columns(self) -> tuple[str, ...]:
-        """Columns that must be present in the measurement data."""
+        """Columns that must be present in the summary data."""
 
-    def preprocess(self, measurement: Measurement) -> Measurement:
-        return measurement
+    def preprocess(self, summary_data: SummaryData) -> SummaryData:
+        return summary_data
 
     @abstractmethod
-    def compute(self, measurement: Measurement) -> tuple[Dict[str, Any], Dict[str, xr.Dataset]]:
+    def compute(self, summary_data: SummaryData) -> tuple[Dict[str, Any], Dict[str, xr.Dataset]]:
         """Perform the main calculation and return summary + tables."""

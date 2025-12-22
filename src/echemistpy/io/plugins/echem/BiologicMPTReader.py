@@ -711,7 +711,7 @@ class BiologicMPTReader(HasTraits):
 
     @staticmethod
     def _clean_data(data: dict[str, Any], metadata: dict[str, Any] | None = None) -> pd.DataFrame:
-        """Clean data to keep only specified columns from BioLogic measurements."""
+        """Clean data to keep only specified columns from BioLogic data."""
         # Convert dict to DataFrame
         if isinstance(data, dict):
             data_copy = {k: v for k, v in data.items() if k != "_metadata"}

@@ -1,4 +1,4 @@
-"""Unified file saving interface for scientific measurements.
+"""Unified file saving interface for scientific data.
 
 This module provides a simplified interface for saving data.
 It supports common formats like CSV, JSON, and NetCDF/HDF5.
@@ -14,7 +14,7 @@ import xarray as xr
 
 from echemistpy.io.structures import (
     AnalysisResult,
-    Measurement,
+    SummaryData,
 )
 
 
@@ -58,22 +58,22 @@ def save_dataset(
         raise ValueError(f"Unsupported save format: {ext}")
 
 
-def save_measurement(
-    measurement: Measurement,
+def save_summary(
+    summary_data: SummaryData,
     path: str | Path,
     fmt: Optional[str] = None,
     **kwargs: Any,
 ) -> None:
-    """Save a Measurement object to disk.
+    """Save a SummaryData object to disk.
 
     Args:
-        measurement: The Measurement object to save
+        summary_data: The SummaryData object to save
         path: Destination path
         fmt: Optional format override
     """
     # We save the underlying xarray dataset
     # Metadata is typically stored in dataset.attrs or separately
-    save_dataset(measurement.data, path, fmt=fmt, **kwargs)
+    save_dataset(summary_data.data, path, fmt=fmt, **kwargs)
 
 
 def save_analysis_result(
@@ -95,5 +95,5 @@ def save_analysis_result(
 __all__ = [
     "save_analysis_result",
     "save_dataset",
-    "save_measurement",
+    "save_summary",
 ]

@@ -2,22 +2,23 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from functools import cached_property
-from typing import Any, Optional
+from typing import Any, ClassVar, Optional, cast
 
 import pandas as pd
 import xarray as xr
+from traitlets import Dict, HasTraits, Unicode
 
 
 class MetadataInfoMixin:
     """Mixin providing common metadata operations for Info classes.
 
-    This mixin provides shared functionality for RawDataInfo, MeasurementInfo,
-    and AnalysisResultInfo classes.
+    This mixin provides shared functionality for RawDataInfo, SummaryDataInfo,
+    and AnalysisResultInfo classes using traitlets.
     """
 
-    STANDARD_METADATA = {
+    STANDARD_METADATA: ClassVar[dict[str, Any]] = {
         "technique": "Unknown",
         "sample_name": "Unknown",
         "start_time": None,
@@ -26,12 +27,17 @@ class MetadataInfoMixin:
         "operator": None,
     }
 
-    def __post_init__(self):
-        """Initialize standard metadata in 'others' if present."""
-        if hasattr(self, "others") and isinstance(self.others, dict):
-            for key, value in self.STANDARD_METADATA.items():
-                if key not in self.others:
-                    self.others[key] = value
+    def __init__(self, **kwargs):
+        """Initialize with standard metadata defaults."""
+        super().__init__(**kwargs)
+        # Initialize standard metadata in dynamic storage if present
+        for container_name in ["meta", "parameters", "others"]:
+            if hasattr(self, container_name):
+                container = getattr(self, container_name)
+                if isinstance(container, dict):
+                    for key, value in self.STANDARD_METADATA.items():
+                        if key not in container:
+                            container[key] = value
 
     def to_dict(self) -> dict[str, Any]:
         """Convert metadata to dictionary representation.
@@ -39,9 +45,7 @@ class MetadataInfoMixin:
         Returns:
             Dictionary containing all metadata fields
         """
-        from dataclasses import asdict
-
-        return asdict(self)
+        return cast(HasTraits, self).trait_values()
 
     def get(self, key: str, default: Any = None) -> Any:
         """Get metadata value by key.
@@ -56,13 +60,10 @@ class MetadataInfoMixin:
             Metadata value or default
         """
         # Check standard fields first
-        if hasattr(self, key):
+        if hasattr(self, key) and cast(HasTraits, self).has_trait(key):
             return getattr(self, key)
 
         # Check dynamic storage locations in order of precedence
-        # RawDataInfo -> meta
-        # AnalysisResultInfo -> parameters
-        # MeasurementInfo -> others
         for container_name in ["meta", "parameters", "others"]:
             container = getattr(self, container_name, None)
             if isinstance(container, dict) and key in container:
@@ -79,13 +80,6 @@ class MetadataInfoMixin:
         Args:
             other: Dictionary of metadata to add/update
         """
-        from dataclasses import fields
-
-        try:
-            field_names = {f.name for f in fields(self)}
-        except TypeError:
-            field_names = set()
-
         # Determine dynamic container
         container = None
         if hasattr(self, "meta"):
@@ -96,16 +90,16 @@ class MetadataInfoMixin:
             container = self.others
 
         for key, value in other.items():
-            if key in field_names and key not in {"meta", "parameters", "others"}:
+            if cast(HasTraits, self).has_trait(key):
                 setattr(self, key, value)
-            elif container is not None:
+            elif container is not None and isinstance(container, dict):
                 container[key] = value
 
 
 class XarrayDataMixin:
     """Mixin providing common xarray.Dataset operations.
 
-    This mixin eliminates code duplication across RawData, Measurement,
+    This mixin eliminates code duplication across RawData, SummaryData,
     and AnalysisResult classes by providing shared functionality.
     """
 
@@ -146,7 +140,7 @@ class XarrayDataMixin:
         Returns:
             List of variable names
         """
-        return list(self.data.data_vars.keys())
+        return [str(k) for k in self.data.data_vars]
 
     def get_coords(self) -> list[str]:
         """Get list of all coordinate names in the dataset.
@@ -154,7 +148,7 @@ class XarrayDataMixin:
         Returns:
             List of coordinate names
         """
-        return list(self.data.coords.keys())
+        return [str(k) for k in self.data.coords]
 
     @cached_property
     def variables(self) -> list[str]:
@@ -163,7 +157,7 @@ class XarrayDataMixin:
         Returns:
             List of variable names
         """
-        return list(self.data.data_vars.keys())
+        return [str(k) for k in self.data.data_vars]
 
     @cached_property
     def coords(self) -> list[str]:
@@ -172,7 +166,7 @@ class XarrayDataMixin:
         Returns:
             List of coordinate names
         """
-        return list(self.data.coords.keys())
+        return [str(k) for k in self.data.coords]
 
     def select(self, variables: Optional[list[str]] = None) -> xr.Dataset:
         """Select specific variables from the dataset.
@@ -185,7 +179,11 @@ class XarrayDataMixin:
         """
         if variables is None:
             return self.data
-        return self.data[variables]
+        # Ensure we return a Dataset even if one variable is selected
+        result = self.data[variables]
+        if isinstance(result, xr.DataArray):
+            return result.to_dataset()
+        return result
 
     def __getitem__(self, key: str) -> xr.DataArray:
         """Access a variable by name.
@@ -199,8 +197,7 @@ class XarrayDataMixin:
         return self.data[key]
 
 
-@dataclass(slots=True)
-class RawDataInfo(MetadataInfoMixin):
+class RawDataInfo(HasTraits, MetadataInfoMixin):
     """Container for all metadata extracted from the raw file.
 
     This stores unprocessed metadata directly from file loaders, maintaining
@@ -210,7 +207,7 @@ class RawDataInfo(MetadataInfoMixin):
         meta: Dictionary containing all metadata key-value pairs
     """
 
-    meta: dict[str, Any] = field(default_factory=dict)
+    meta = Dict(help="Dictionary containing all metadata key-value pairs")
 
     def to_dict(self) -> dict[str, Any]:
         """Convert metadata to dictionary representation.
@@ -236,44 +233,42 @@ class RawData(XarrayDataMixin):
     data: xr.Dataset
 
 
-@dataclass(slots=True)
-class MeasurementInfo(MetadataInfoMixin):
-    """Standardized metadata for a measurement.
+class SummaryDataInfo(HasTraits, MetadataInfoMixin):
+    """Standardized metadata for a summary.
 
-    This class provides a consistent interface for measurement metadata across
+    This class provides a consistent interface for summary metadata across
     different file formats and techniques. It separates common fields from
     technique-specific metadata stored in the 'others' dictionary.
     """
 
-    technique: str = "Unknown"
-    sample_name: str = "Unknown"
-    start_time: Optional[str] = None
-    end_time: Optional[str] = None
-    instrument: Optional[str] = None
-    operator: Optional[str] = None
-    others: dict[str, Any] = field(default_factory=dict)
+    technique = Unicode("Unknown")
+    sample_name = Unicode("Unknown")
+    start_time = Unicode(None, allow_none=True)
+    end_time = Unicode(None, allow_none=True)
+    instrument = Unicode(None, allow_none=True)
+    operator = Unicode(None, allow_none=True)
+    others = Dict(help="Technique-specific metadata")
 
 
 @dataclass(slots=True)
-class Measurement(XarrayDataMixin):
-    """Container for standardized measurement data using xarray.Dataset.
+class SummaryData(XarrayDataMixin):
+    """Container for standardized summary data using xarray.Dataset.
 
-    This represents measurement data after standardization, with consistent
+    This represents data after standardization, with consistent
     column names and units following echemistpy conventions. The xarray
     backend enables powerful data analysis and visualization capabilities.
 
-    Metadata is stored separately in MeasurementInfo for clean separation
+    Metadata is stored separately in SummaryDataInfo for clean separation
     of data and metadata.
 
     Attributes:
-        data: xarray.Dataset containing standardized measurement data
+        data: xarray.Dataset containing standardized summary data
     """
 
     data: xr.Dataset
 
 
-@dataclass(slots=True)
-class AnalysisResultInfo(MetadataInfoMixin):
+class AnalysisResultInfo(HasTraits, MetadataInfoMixin):
     """Metadata for analysis results.
 
     This class stores metadata about data analysis and processing, including
@@ -284,8 +279,8 @@ class AnalysisResultInfo(MetadataInfoMixin):
         others: Additional metadata not covered by standard fields
     """
 
-    parameters: dict[str, Any] = field(default_factory=dict)
-    others: dict[str, Any] = field(default_factory=dict)
+    parameters = Dict(help="Dictionary of analysis parameters and settings")
+    others = Dict(help="Additional metadata not covered by standard fields")
 
 
 @dataclass(slots=True)
@@ -309,8 +304,8 @@ class AnalysisResult(XarrayDataMixin):
 __all__ = [
     "AnalysisResult",
     "AnalysisResultInfo",
-    "Measurement",
-    "MeasurementInfo",
     "RawData",
     "RawDataInfo",
+    "SummaryData",
+    "SummaryDataInfo",
 ]

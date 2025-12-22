@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 import openpyxl
+import openpyxl.worksheet.worksheet
 import xarray as xr
 from traitlets import HasTraits, Unicode
 
