@@ -76,6 +76,29 @@ uv sync --all-groups
 
 ---
 
+## Usage Examples
+
+### Data Loading & Standardization (I/O)
+
+`echemistpy` provides a unified `load` interface that automatically detects file formats and standardizes them with consistent column names and units.
+
+```python
+from echemistpy.io import load
+
+# Load a BioLogic .mpt file
+raw_data, raw_info = load("docs/examples/echem/Biologic_GPCL.mpt", sample_name="MySample")
+
+# Explore standardized data (xarray.Dataset)
+print(raw_data.data)
+
+# Access metadata
+print(raw_info.to_dict())
+```
+
+For a comprehensive demonstration, see the [IO Tutorial Notebook](docs/Characterization/IO_Tutorial.ipynb).
+
+---
+
 ## Project Structure
 
 ```

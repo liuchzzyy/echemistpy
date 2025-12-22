@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any, ClassVar
 
 import numpy as np
+import pandas as pd
 import xarray as xr
 from traitlets import HasTraits, Unicode
 
@@ -147,6 +148,27 @@ def fieldname_to_dtype(fieldname: str) -> tuple[str, Any]:
 def comma_converter(float_text: bytes) -> float:
     """Convert text to float, handling ',' as decimal point."""
     return float(float_text.translate(bytes.maketrans(b",", b".")))
+
+
+def _calculate_systime(acq_start: str, relative_times: np.ndarray) -> pd.Series:
+    """Calculate absolute system time from acquisition start and relative times.
+
+    Args:
+        acq_start: Acquisition start time string (e.g., "10/25/2022 13:57:09.123")
+        relative_times: Array of relative times in seconds
+
+    Returns:
+        pandas.Series of datetime64[ns]
+    """
+    try:
+        # BioLogic format: MM/DD/YYYY HH:MM:SS.ffffff
+        start_dt = datetime.strptime(acq_start, "%m/%d/%Y %H:%M:%S.%f")
+        start_ts = start_dt.timestamp()
+        return pd.to_datetime(start_ts + relative_times, unit="s")
+    except Exception as e:
+        logger.debug("Failed to parse acquisition start time '%s': %s", acq_start, e)
+        # Fallback to just relative times if parsing fails
+        return pd.Series(relative_times)
 
 
 def mpt_file(file_or_path: str | Path, encoding: str = "latin1") -> tuple[np.ndarray, list[bytes]]:
@@ -734,7 +756,7 @@ class BiologicMPTReader(HasTraits):
         if is_gpcl:
             BiologicMPTReader._add_gpcl_columns(data_vars, mpt_array, names, metadata, active_material_mass)
 
-        return xr.Dataset(data_vars, coords={"record": np.arange(n_records)})
+        return xr.Dataset(data_vars, coords={"record": np.arange(1, n_records + 1)})
 
     @staticmethod
     def _add_gpcl_columns(data_vars: dict, mpt_array: np.ndarray, names: list[str], metadata: dict | None, mass: Any):
@@ -752,9 +774,7 @@ class BiologicMPTReader(HasTraits):
         try:
             acq_start = metadata.get("file_info", {}).get("Acquisition started on", "") if metadata else ""
             if acq_start and "time/s" in names:
-                start_ts = datetime.strptime(acq_start, "%m/%d/%Y %H:%M:%S.%f").timestamp()
-                systimes = [datetime.fromtimestamp(start_ts + t).strftime("%Y-%m-%dT%H:%M:%S") for t in mpt_array["time/s"]]
-                data_vars["systime"] = (["record"], np.array(systimes))
+                data_vars["systime"] = (["record"], _calculate_systime(acq_start, mpt_array["time/s"]))
         except Exception as e:
             logger.debug("Failed to calculate systime: %s", e)
 

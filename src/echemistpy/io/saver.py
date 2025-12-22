@@ -109,16 +109,16 @@ def save_data(
 
 
 def save_combined(
-    data: Union[RawData, ResultsData, Sequence[Union[RawData, ResultsData]]],
-    info: Union[RawDataInfo, ResultsDataInfo, Sequence[Union[RawDataInfo, ResultsDataInfo]]],
+    data: Union[BaseData, Sequence[BaseData]],
+    info: Union[BaseInfo, Sequence[BaseInfo]],
     path: str | Path,
     **kwargs: Any,
 ) -> None:
     """Save combined data and info to a .nc file.
 
     Args:
-        data: Single or sequence of RawData or ResultsData objects.
-        info: Single or sequence of RawDataInfo or ResultsDataInfo objects.
+        data: Single or sequence of Data objects (RawData, ResultsData).
+        info: Single or sequence of Info objects (RawDataInfo, ResultsDataInfo).
         path: Destination path.
         **kwargs: Additional arguments for xarray.to_netcdf.
     """

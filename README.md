@@ -27,7 +27,7 @@
 
 ## echemistpy 是什么？
 
-**echemistpy** 是一个为电化学技术与材料表征设计的统一数据处理框架。核心采用可扩展的读取器 + 分析器模式，配合管道编排架构，基于 xarray、numpy、scipy 与 pluggy 构建。
+**echemistpy** 是一个为电化学技术与材料表征设计的统一数据处理框架。核心采用可扩展的读取器 + 分析器模式，配合管道编排架构，基于 xarray、numpy 与 scipy 构建。
 
 ### 主要特性
 
@@ -72,6 +72,29 @@ uv sync --only-group interactive
 # 所有依赖分组
 uv sync --all-groups
 ```
+
+---
+
+## 使用示例
+
+### 数据读取与标准化 (I/O)
+
+`echemistpy` 提供了一个统一的 `load` 接口，可以自动识别文件格式并将其标准化为统一的列名和单位。
+
+```python
+from echemistpy.io import load
+
+# 加载 BioLogic .mpt 文件
+raw_data, raw_info = load("docs/examples/echem/Biologic_GPCL.mpt", sample_name="MySample")
+
+# 查看标准化后的数据 (xarray.Dataset)
+print(raw_data.data)
+
+# 查看元数据
+print(raw_info.to_dict())
+```
+
+更多详细演示请参考 [IO 功能演示笔记本](docs/Characterization/IO_Tutorial.ipynb)。
 
 ---
 
