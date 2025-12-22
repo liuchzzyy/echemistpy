@@ -7,7 +7,7 @@ from typing import List, Sequence
 import xarray as xr
 
 from echemistpy.processing.analyzers import TechniqueRegistry
-from echemistpy.core.structures import AnalysisResult, Measurement
+from echemistpy.io.structures import AnalysisResult, Measurement
 
 
 class AnalysisPipeline:
@@ -50,7 +50,7 @@ class AnalysisPipeline:
 
         Examples:
             >>> from echemistpy.analyzers import TechniqueRegistry
-            >>> from echemistpy.core.structures import AnalysisResult
+            >>> from echemistpy.io.structures import AnalysisResult
             >>> registry = TechniqueRegistry()
             >>> pipeline = AnalysisPipeline(registry)
             >>> results = [

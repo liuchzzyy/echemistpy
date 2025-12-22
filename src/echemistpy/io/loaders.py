@@ -1,7 +1,7 @@
 """Generic file loading and standardization for scientific measurements.
 
 This module provides:
-1. Format detection and plugin-based loading into EChemEntry objects
+1. Format detection and plugin-based loading using pluggy
 2. Data standardization using technique-specific mappings
 3. Unified API for loading and processing measurement data
 """
@@ -10,221 +10,60 @@ from __future__ import annotations
 
 import warnings
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import numpy as np
 import xarray as xr
-import pandas as pd
 
-from echemistpy.core.structures import (
-    RawData,
-    RawDataInfo,
+from echemistpy.io.plugin_manager import get_plugin_manager
+from echemistpy.io.structures import (
     Measurement,
     MeasurementInfo,
-    AnalysisResult,
-    AnalysisResultInfo,
-    Entry,
-    Entries,
+    RawData,
+    RawDataInfo,
 )
 
-# Type alias for loader plugins
-Loader = Callable[[Path, Any], Entry]
+# Type alias for backward compatibility
+Loader = Callable[[Path, Any], Tuple[RawData, RawDataInfo]]
 
 
 # ============================================================================
-# Helper Functions
+# Plugin System Setup
 # ============================================================================
 
 
-def _create_entry(
-    dataset: xr.Dataset,
-    path: Path,
-    technique: str = "Unknown",
-    extra_meta: Optional[Dict[str, Any]] = None,
-) -> Entry:
-    """Wrap a dataset into an Entry with metadata.
+def _initialize_default_plugins() -> None:
+    """Initialize and register default loader and saver plugins."""
+    pm = get_plugin_manager()
 
-    Args:
-        dataset: xarray Dataset containing the raw data
-        path: Path to the source file
-        technique: Measurement technique
-        extra_meta: Additional metadata to include
+    # Register echem-specific plugins
+    from echemistpy.io.plugings.echem import BiologicLoaderPlugin, LanheLoaderPlugin
+    pm.register_plugin(BiologicLoaderPlugin(), name="biologic")
+    pm.register_plugin(LanheLoaderPlugin(), name="lanhe")
 
-    Returns:
-        Entry object with raw data and metadata populated,
-        and other fields initialized as empty.
-    """
-    meta_dict = {
-        "technique": technique,
-        "filename": path.stem,
-        "extension": path.suffix,
-    }
-    if extra_meta:
-        meta_dict.update(extra_meta)
+    # Register generic format plugins
+    from echemistpy.io.plugings.generic_loaders import (
+        CSVLoaderPlugin,
+        ExcelLoaderPlugin,
+        HDF5LoaderPlugin,
+    )
+    pm.register_plugin(CSVLoaderPlugin(), name="csv")
+    pm.register_plugin(ExcelLoaderPlugin(), name="excel")
+    pm.register_plugin(HDF5LoaderPlugin(), name="hdf5")
 
-    # Create RawData components
-    raw_data_info = RawDataInfo(meta=meta_dict)
-    raw_data = RawData(data=dataset)
-
-    # Create empty components for the rest
-    # Note: We create empty Datasets for required data fields
-    measurement = Measurement(data=xr.Dataset())
-    measurement_info = MeasurementInfo()
-
-    analysis_result = AnalysisResult(data=xr.Dataset())
-    analysis_result_info = AnalysisResultInfo()
-
-    return Entry(raw_data=raw_data, raw_data_info=raw_data_info, measurement=measurement, measurement_info=measurement_info, analysis_result=analysis_result, analysis_result_info=analysis_result_info)
+    # Register saver plugins
+    from echemistpy.io.plugings.generic_savers import (
+        CSVSaverPlugin,
+        HDF5SaverPlugin,
+        JSONSaverPlugin,
+    )
+    pm.register_plugin(CSVSaverPlugin(), name="csv_saver")
+    pm.register_plugin(HDF5SaverPlugin(), name="hdf5_saver")
+    pm.register_plugin(JSONSaverPlugin(), name="json_saver")
 
 
-def _structured_array_to_dataset(array: np.ndarray) -> xr.Dataset:
-    """Convert structured numpy array to xarray Dataset."""
-    if array.size == 0:
-        return xr.Dataset()
-    if array.ndim == 0:
-        array = array.reshape(1)
-    if array.dtype.names is None:
-        raise ValueError("Tabular text files must include a header row.")
-    row_dim = np.arange(array.shape[0])
-    data_vars = {name: ("row", array[name]) for name in array.dtype.names}
-    return xr.Dataset(data_vars=data_vars, coords={"row": row_dim})
-
-
-# ============================================================================
-# Format-Specific Loader Plugins
-# ============================================================================
-
-
-def _load_delimited(path: Path, *, delimiter: str, **kwargs: Any) -> Entry:
-    """Load delimited text files (CSV, txt, etc.)."""
-    # Read header lines to capture potential metadata
-    header_lines = []
-    with open(path, "r", errors="ignore") as f:
-        for _ in range(10):  # Read first 10 lines to check for comments
-            line = f.readline()
-            if line.strip().startswith("#") or line.strip().startswith("%"):
-                header_lines.append(line.strip())
-            else:
-                break
-
-    array = np.genfromtxt(path, delimiter=delimiter, names=True, dtype=None, encoding=None, **kwargs)
-    dataset = _structured_array_to_dataset(array)
-
-    extra_meta = {"header_comments": header_lines} if header_lines else {}
-    return _create_entry(dataset, path, technique="Table", extra_meta=extra_meta)
-
-
-def _load_lanhe_ccs(path: Path, **kwargs: Any) -> Entry:
-    """Load LANHE .ccs binary files using LanheReader plugin."""
-    tag_filter = kwargs.pop("tag_filter", None)
-    channel_filter = kwargs.pop("channel_filter", None)
-
-    from echemistpy.utils.external.echem.lanhe_reader import LanheReader
-
-    reader = LanheReader(path)
-    dataset = reader.to_dataset(tag_filter=tag_filter, channel_filter=channel_filter)
-
-    # Extract metadata from reader if available
-    extra_meta = {}
-    if hasattr(reader, "header"):
-        extra_meta["lanhe_header"] = reader.header
-
-    return _create_entry(dataset, path, technique="Echem/Lanhe", extra_meta=extra_meta)
-
-
-def _load_biologic(path: Path, **kwargs: Any) -> Entry:
-    """Load BioLogic .mpr or .mpt files using BiologicMPTReader plugin."""
-    from echemistpy.utils.external.echem.biologic_reader import BiologicMPTReader
-
-    reader = BiologicMPTReader()
-    # Note: BiologicMPTReader might return RawMeasurement (old) or have been updated.
-    # We assume it returns an object with .data (RawData) and .metadata (RawMetadata/Info)
-    # OR we might need to adapt it.
-    # Since we cannot guarantee the reader is updated, we will try to use it
-    # and adapt the result if possible, or just use its internal logic if exposed.
-
-    # For now, assuming reader.read(path) returns something we can't easily use if it's the old class.
-    # We will try to use the reader's internal methods if possible, or just wrap the result.
-    # If the reader returns the old RawMeasurement, it will fail at runtime if that class is gone.
-    # So we assume the user will update the reader or has updated it.
-    # Here we will just call it and expect it to return something compatible or we catch it.
-
-    # FIXME: This depends on BiologicMPTReader being updated to return EChemEntry or similar.
-    # If it returns the old RawMeasurement, this will fail.
-    # As a fallback, we can try to manually read if the reader exposes a to_dataset method.
-
-    # Let's assume for this task that we just need to update this file to use EChemEntry.
-    # If the reader returns a dataset, we use _create_entry.
-
-    # If reader.read() returns the old object, we can't use it.
-    # Let's try to see if we can just use the reader to get a dataset.
-    # Looking at typical patterns, maybe reader.to_dataset()?
-
-    # Reverting to using the reader as is, but wrapping the result if it's a dataset.
-    # If it's the old object, we might need to extract fields.
-
-    result = reader.read(path, **kwargs)
-
-    if isinstance(result, EChemEntry):
-        return result
-
-    # If it's the old RawMeasurement (if it still exists in memory) or similar
-    if hasattr(result, "data") and hasattr(result, "metadata"):
-        # Extract dataset and meta
-        dataset = result.data.data if hasattr(result.data, "data") else result.data
-        meta = result.metadata.meta if hasattr(result.metadata, "meta") else result.metadata
-        return _create_entry(dataset, path, technique="Echem/BioLogic", extra_meta=meta)
-
-    # If it's just a dataset
-    if isinstance(result, xr.Dataset):
-        return _create_entry(result, path, technique="Echem/BioLogic")
-
-    raise ValueError(f"Biologic loader returned unexpected type: {type(result)}")
-
-
-def _load_excel(path: Path, **kwargs: Any) -> Entry:
-    """Load Excel files using pandas backend."""
-
-    # Read Excel file
-    df = pd.read_excel(path, **kwargs)
-
-    # Convert to xarray Dataset
-    data_vars = {}
-    for col in df.columns:
-        data_vars[str(col)] = ("row", df[col].values)
-
-    dataset = xr.Dataset(data_vars=data_vars, coords={"row": np.arange(len(df))})
-    return _create_entry(dataset, path, technique="Excel")
-
-
-def _load_hdf5(path: Path, **kwargs: Any) -> Entry:
-    """Load HDF5 files using xarray backend."""
-    try:
-        dataset = xr.open_dataset(path, engine="h5netcdf", **kwargs)
-    except Exception:
-        # Fallback to netcdf4 engine
-        dataset = xr.open_dataset(path, engine="netcdf4", **kwargs)
-
-    extra_meta = dict(dataset.attrs)
-    return _create_entry(dataset, path, technique="HDF5", extra_meta=extra_meta)
-
-
-# ============================================================================
-# Plugin Registry
-# ============================================================================
-
-_LOADER_TYPES: Dict[str, Loader] = {
-    "csv": lambda path, **kwargs: _load_delimited(path, delimiter=",", **kwargs),
-    "txt": lambda path, **kwargs: _load_delimited(path, delimiter="\t", **kwargs),
-    "ccs": _load_lanhe_ccs,
-    "mpr": _load_biologic,
-    "mpt": _load_biologic,
-    "xlsx": _load_excel,
-    "xls": _load_excel,
-    "h5": _load_hdf5,
-    "hdf5": _load_hdf5,
-    "hdf": _load_hdf5,
-}
+# Initialize plugins on module import
+_initialize_default_plugins()
 
 
 # ============================================================================
@@ -232,7 +71,7 @@ _LOADER_TYPES: Dict[str, Loader] = {
 # ============================================================================
 
 
-def _load(path: Path, fmt: Optional[str] = None, **kwargs: Any) -> Entry:
+def _load(path: Path, fmt: Optional[str] = None, **kwargs: Any) -> Tuple[RawData, RawDataInfo]:
     """Unified loader function that dispatches to format-specific plugins.
 
     Args:
@@ -241,36 +80,43 @@ def _load(path: Path, fmt: Optional[str] = None, **kwargs: Any) -> Entry:
         **kwargs: Additional arguments passed to the specific loader plugin
 
     Returns:
-        Entry containing loaded data and metadata
+        Tuple of (RawData, RawDataInfo) containing loaded data and metadata
 
     Raises:
         ValueError: If file format is not supported
     """
-    extension = (fmt or path.suffix.lstrip(".")).lower()
-
-    try:
-        loader = _LOADER_TYPES[extension]
-    except KeyError as exc:
-        raise ValueError(f"Unsupported file extension '{extension}'. Supported formats: {', '.join(sorted(_LOADER_TYPES.keys()))}") from exc
-
-    return loader(path, **kwargs)
+    pm = get_plugin_manager()
+    return pm.load_file(path, fmt=fmt, **kwargs)
 
 
-def register_loader(extension: str, loader: Loader) -> None:
-    """Register a custom loader plugin for a file extension.
+def register_loader(plugin: Any, name: Optional[str] = None) -> None:
+    """Register a custom loader plugin.
 
     Args:
-        extension: File extension (without dot, e.g., 'xyz')
-        loader: Loader function that takes (Path, **kwargs) and returns EChemEntry
+        plugin: Plugin instance that implements LoaderSpec interface
+        name: Optional plugin name
 
     Example:
-        >>> def my_custom_loader(path: Path, **kwargs) -> EChemEntry:
-        ...     # Custom loading logic
-        ...     dataset = ...  # Create xarray Dataset
-        ...     return _create_entry(dataset, path, technique="Custom")
-        >>> register_loader("xyz", my_custom_loader)
+        >>> from echemistpy.io.plugin_specs import hookimpl
+        >>> from traitlets import HasTraits
+        >>>
+        >>> class MyLoaderPlugin(HasTraits):
+        ...     @hookimpl
+        ...     def get_supported_extensions(self):
+        ...         return ["xyz"]
+        ...
+        ...     @hookimpl
+        ...     def load_file(self, filepath, **kwargs):
+        ...         # Custom loading logic
+        ...         dataset = ...  # Create xarray Dataset
+        ...         raw_data = RawData(data=dataset)
+        ...         raw_data_info = RawDataInfo(meta={"technique": "Custom"})
+        ...         return raw_data, raw_data_info
+        >>>
+        >>> register_loader(MyLoaderPlugin(), name="my_loader")
     """
-    _LOADER_TYPES[extension.lower()] = loader
+    pm = get_plugin_manager()
+    pm.register_plugin(plugin, name=name)
 
 
 # ============================================================================
@@ -378,14 +224,11 @@ class DataStandardizer:
         """Standardize column names based on technique and custom mappings."""
         # Map specific techniques to general categories
         technique_category = self.technique
-        if self.technique in ["cv", "gcd", "eis", "ca", "cp", "lsjv", "echem", "ec"]:
+        if self.technique in {"cv", "gcd", "eis", "ca", "cp", "lsjv", "echem", "ec"}:
             technique_category = "electrochemistry"
 
         # Get standard mapping for technique
-        if technique_category in self.STANDARD_MAPPINGS:
-            mapping = self.STANDARD_MAPPINGS[technique_category].copy()
-        else:
-            mapping = {}
+        mapping = self.STANDARD_MAPPINGS[technique_category].copy() if technique_category in self.STANDARD_MAPPINGS else {}
 
         # Add custom mappings if provided
         if custom_mapping:
@@ -434,12 +277,11 @@ class DataStandardizer:
                     self.dataset = self.dataset.rename({var_name: new_name})
 
             # Handle voltage conversions
-            elif "voltage" in var_name.lower() or "potential" in var_name.lower() or var_name.startswith("E"):
-                if "/mV" in var_name:
-                    # Convert mV to V
-                    self.dataset[var_name] = var_data / 1000
-                    new_name = var_name.replace("/mV", "/V")
-                    self.dataset = self.dataset.rename({var_name: new_name})
+            elif ("voltage" in var_name.lower() or "potential" in var_name.lower() or var_name.startswith("E")) and "/mV" in var_name:
+                # Convert mV to V
+                self.dataset[var_name] = var_data / 1000
+                new_name = var_name.replace("/mV", "/V")
+                self.dataset = self.dataset.rename({var_name: new_name})
 
         return self
 
@@ -535,31 +377,33 @@ def detect_technique(dataset: xr.Dataset) -> str:
 
 
 def standardize_measurement(
-    entry: EChemEntry,
+    raw_data: RawData,
+    raw_data_info: RawDataInfo,
     technique_hint: Optional[str] = None,
     custom_mapping: Optional[Dict[str, str]] = None,
     required_columns: Optional[List[str]] = None,
-) -> EChemEntry:
-    """Standardize an EChemEntry's measurement data.
+) -> Tuple[Measurement, MeasurementInfo]:
+    """Standardize raw data to measurement format.
 
     Args:
-        entry: Input entry with raw data
+        raw_data: Input raw data
+        raw_data_info: Input raw data metadata
         technique_hint: Override technique detection
         custom_mapping: Additional column name mappings
         required_columns: List of columns that must be present
 
     Returns:
-        EChemEntry with populated and standardized Measurement and MeasurementInfo
+        Tuple of (Measurement, MeasurementInfo) with standardized data
     """
     # Extract dataset from RawData
-    if isinstance(entry.raw_data.data, xr.Dataset):
-        dataset = entry.raw_data.data
+    if isinstance(raw_data.data, xr.Dataset):
+        dataset = raw_data.data
     else:
         raise ValueError("RawData must contain an xarray.Dataset for standardization")
 
     # Determine technique
-    technique = technique_hint or entry.raw_data_info.meta.get("technique") or detect_technique(dataset)
-    if technique in ["Unknown", "unknown", "Table"]:
+    technique = technique_hint or raw_data_info.get("technique") or detect_technique(dataset)
+    if technique in {"Unknown", "unknown", "Table"}:
         technique = detect_technique(dataset)
 
     # Standardize data
@@ -579,21 +423,22 @@ def standardize_measurement(
     standardized_dataset = standardizer.get_dataset()
 
     # Create MeasurementInfo
-    raw_meta = entry.raw_data_info.meta
+    raw_meta = raw_data_info.meta
 
     info = MeasurementInfo(
-        technique=technique,
-        sample_name=raw_meta.get("original_filename", "Unknown").split(".")[0],
-        instrument=raw_meta.get("instrument"),
-        operator=raw_meta.get("operator"),
-        others=raw_meta,  # Keep all raw metadata in others
+        others={
+            "technique": technique,
+            "sample_name": raw_meta.get("filename", "Unknown"),
+            "instrument": raw_meta.get("instrument"),
+            "operator": raw_meta.get("operator"),
+            **raw_meta,  # Keep all raw metadata in others
+        }
     )
 
-    # Update the entry with standardized measurement
-    entry.measurement = Measurement(data=standardized_dataset)
-    entry.measurement_info = info
+    # Create Measurement
+    measurement = Measurement(data=standardized_dataset)
 
-    return entry
+    return measurement, info
 
 
 # ============================================================================
@@ -611,13 +456,16 @@ def get_file_info(path: str | Path) -> Dict[str, Any]:
         Dictionary with file information including size, format, columns, etc.
     """
     path = Path(path)
+    pm = get_plugin_manager()
+    supported_extensions = list(pm.get_supported_loaders().keys())
+
     info = {
         "path": str(path),
         "name": path.name,
         "size_bytes": path.stat().st_size if path.exists() else 0,
         "extension": path.suffix.lower(),
         "exists": path.exists(),
-        "supported": path.suffix.lower().lstrip(".") in _LOADER_MAP,
+        "supported": path.suffix.lower().lstrip(".") in supported_extensions,
     }
 
     if not path.exists():
@@ -625,7 +473,7 @@ def get_file_info(path: str | Path) -> Dict[str, Any]:
 
     # Try to get column information for supported formats
     try:
-        if info["extension"] in [".csv", ".tsv"]:
+        if info["extension"] in {".csv", ".tsv"}:
             # Read just the header
             with open(path, "r", encoding="utf-8", errors="ignore") as f:
                 first_line = f.readline().strip()
@@ -643,31 +491,46 @@ def get_file_info(path: str | Path) -> Dict[str, Any]:
 
 def list_supported_formats() -> Dict[str, str]:
     """Return a dictionary of supported file formats and their descriptions."""
-    return {
-        "csv": "Comma-separated values",
-        "tsv": "Tab-separated values",
-        "ccs": "LANHE proprietary cycler files",
-        "nc/nc4/netcdf": "NetCDF format",
-        "mpr/mpt": "BioLogic EC-Lab files",
-        "xlsx/xls": "Excel spreadsheet (requires pandas)",
-        "h5/hdf5/hdf": "HDF5 format",
-    }
+    pm = get_plugin_manager()
+    loaders = pm.get_supported_loaders()
+
+    # Group by plugin type
+    formats = {}
+    for ext, plugin_name in loaders.items():
+        if "biologic" in plugin_name.lower():
+            formats[ext] = "BioLogic EC-Lab files"
+        elif "lanhe" in plugin_name.lower():
+            formats[ext] = "LANHE battery test files"
+        elif "csv" in plugin_name.lower():
+            formats[ext] = "Comma/Tab-separated values"
+        elif "excel" in plugin_name.lower():
+            formats[ext] = "Excel spreadsheet"
+        elif "hdf5" in plugin_name.lower():
+            formats[ext] = "HDF5/NetCDF format"
+        else:
+            formats[ext] = f"Loaded by {plugin_name}"
+
+    return formats
 
 
 __all__ = [
+    "DataStandardizer",
+    # Type alias
+    "Loader",
+    "detect_technique",
+    # Utilities
+    "get_file_info",
+    # Plugin management
+    "get_plugin_manager",
+    "list_supported_formats",
+    "load_data_file",
+    "load_table",
     # Loading functions
     "register_loader",
     # Standardization
     "standardize_measurement",
-    "DataStandardizer",
-    "detect_technique",
-    # Utilities
-    "get_file_info",
-    "list_supported_formats",
-    # Type alias
-    "Loader",
 ]
 
-# Public aliases
+# Public aliases for backward compatibility
 load_data_file = _load
 load_table = _load

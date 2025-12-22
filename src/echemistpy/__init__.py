@@ -4,15 +4,13 @@ This module wires together the public API so that the library can be consumed by
 notebook users as well as more structured applications.
 """
 
-from .core import (
+from .io import (
     Measurement,
     MeasurementInfo,
     RawData,
     RawDataInfo,
     AnalysisResult,
     AnalysisResultInfo,
-)
-from .io import (
     load_data_file,
     save_measurement,
     save_results,
