@@ -15,10 +15,9 @@ from collections import OrderedDict, defaultdict
 from datetime import date, datetime
 from os import SEEK_SET
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 import numpy as np
-import pandas as pd
 import xarray as xr
 from traitlets import HasTraits, Unicode
 
@@ -511,8 +510,9 @@ class BiologicMPTReader(HasTraits):
     """Reader for BioLogic MPT files."""
 
     filepath = Unicode()
-    technique = ["echem"]
-    instrument = "BioLogic"
+    active_material_mass = Unicode(allow_none=True)
+    technique: ClassVar[list[str]] = ["echem"]
+    instrument: ClassVar[str] = "BioLogic"
 
     def __init__(self, filepath: str | Path | None = None, **kwargs):
         super().__init__(**kwargs)
@@ -529,67 +529,51 @@ class BiologicMPTReader(HasTraits):
             raise FileNotFoundError(f"File not found: {path}")
 
         # Read raw data and metadata
-        metadata, data_dict = self._read_mpt_file()
+        mpt_array, comments = mpt_file(path)
 
-        # Clean metadata and data
+        # Parse and clean metadata
+        file_info = self._parse_mpt_metadata(list(comments))
+        metadata = {
+            "file_info": file_info,
+            "file_type": "MPT",
+            "file_path": str(self.filepath),
+        }
         cleaned_metadata = self._clean_metadata(metadata)
-        cleaned_df = self._clean_data(data_dict, metadata)
 
-        # Convert to xarray Dataset
-        ds = xr.Dataset.from_dataframe(cleaned_df)
-        if "index" in ds.coords:
-            ds = ds.rename({"index": "row"})
-        elif "record" in ds.coords:
-            ds = ds.rename({"record": "row"})
-        elif "records" in ds.coords:
-            ds = ds.rename({"records": "row"})
+        # Determine mass: priority to self.active_material_mass, then metadata
+        test_info = cleaned_metadata.get("test_information", {})
+        mass = self.active_material_mass or test_info.get("Mass of active material") or cleaned_metadata.get("channel_process_info", {}).get("Characteristic mass")
+
+        # Determine specific technique
+        tech_str = cleaned_metadata.get("file_info", {}).get("technique", "")
+        names = mpt_array.dtype.names or []
+        is_peis = "Electrochemical Impedance" in tech_str or "PEIS" in tech_str
+        is_gpcl = "Galvanostatic Cycling" in tech_str or "GPCL" in tech_str
+        if not is_peis and "freq/Hz" in names:
+            is_peis = True
+
+        tech_list = list(self.technique)
+        if is_peis:
+            tech_list.append("peis")
+        if is_gpcl:
+            tech_list.append("gpcl")
+
+        # Clean data (returns xarray.Dataset)
+        ds = self._clean_data(mpt_array, metadata=cleaned_metadata, active_material_mass=mass)
 
         # Create RawData and RawDataInfo
         raw_data = RawData(data=ds)
-
-        # Extract top-level metadata from cleaned_metadata
-        test_info = cleaned_metadata.get("test_information", {})
-        sample_name = str(test_info.get("name", "Unknown"))
-        start_time = test_info.get("Acquisition started on")
-        operator = test_info.get("Operator")
-
         raw_info = RawDataInfo(
-            sample_name=sample_name,
-            start_time=start_time,
-            operator=operator,
-            technique=self.technique,
+            sample_name=str(test_info.get("name", "Unknown")),
+            start_time=test_info.get("Acquisition started on"),
+            operator=test_info.get("Operator"),
+            technique=tech_list,
             instrument=self.instrument,
+            active_material_mass=str(mass) if mass is not None else None,
             others=cleaned_metadata,
         )
 
         return raw_data, raw_info
-
-    def _read_mpt_file(self) -> tuple[dict[str, Any], dict[str, Any]]:
-        """Read metadata and data from MPT file."""
-        mpt_array, comments = mpt_file(Path(self.filepath))
-
-        metadata = {
-            "file_info": self._parse_mpt_metadata(list(comments)),
-            "file_type": "MPT",
-            "file_path": str(self.filepath),
-        }
-
-        column_names: list[str] = list(mpt_array.dtype.names or [])
-
-        # Ensure unique column names without normalization
-        unique_col_names = []
-        seen = {}
-        for name in column_names:
-            if name not in seen:
-                unique_col_names.append(name)
-                seen[name] = 1
-            else:
-                seen[name] += 1
-                unique_col_names.append(f"{name}_{seen[name]}")
-
-        data_dict = {unique_name: mpt_array[raw_name].tolist() for raw_name, unique_name in zip(column_names, unique_col_names, strict=True)}
-
-        return metadata, data_dict
 
     @staticmethod
     def _parse_mpt_metadata(comments: list[bytes | str]) -> dict[str, Any]:
@@ -599,240 +583,179 @@ class BiologicMPTReader(HasTraits):
         in_parameters = False
         work_mode_list: list[dict[str, Any]] = []
 
-        def split_key_value(content: str) -> tuple[str, str] | None:
-            """Split key-value pair, trying ' : ' first, then ':'."""
-            if " : " in content:
-                key, value = content.split(" : ", 1)
-            elif ":" in content:
-                key, value = content.split(":", 1)
-            else:
-                return None
-            return key.strip(), value.strip()
+        def split_kv(content: str) -> tuple[str, str] | None:
+            for sep in (" : ", ":"):
+                if sep in content:
+                    k, v = content.split(sep, 1)
+                    return k.strip(), v.strip()
+            return None
 
-        def add_or_update_value(d: dict[str, Any], key: str, value: Any) -> None:
-            """Add a value, converting duplicates to list structure."""
+        def add_val(d: dict[str, Any], key: str, val: Any) -> None:
             if key not in d:
-                d[key] = value
+                d[key] = val
             else:
-                # Convert to list on duplicate
                 existing = d[key]
                 if isinstance(existing, list):
-                    # Already a list, append new value
-                    existing.append(value)
+                    existing.append(val)
                 else:
-                    # First duplicate, convert to list
-                    d[key] = [existing, value]
+                    d[key] = [existing, val]
 
         for line in comments:
-            text_line = line
-            if isinstance(text_line, bytes):
-                try:
-                    text_line = text_line.decode("latin1")
-                except Exception as e:
-                    logger.debug("Failed to decode line as latin1: %s", e)
-                    continue
-
-            text_line = text_line.rstrip("\r\n")
-            if not text_line.strip():
-                # Empty line may signal end of parameters section
-                if in_parameters and current_section is not None:
+            text = line.decode("latin1") if isinstance(line, bytes) else line
+            text = text.rstrip("\r\n")
+            if not text.strip():
+                if in_parameters:
                     in_parameters = False
                 continue
 
-            indent_level = len(text_line) - len(text_line.lstrip())
-            line_content = text_line.strip()
+            indent = len(text) - len(text.lstrip())
+            content = text.strip()
 
-            if indent_level > 0 and current_section is not None:
-                kv = split_key_value(line_content)
+            if indent > 0 and current_section is not None:
+                kv = split_kv(content)
                 if kv:
-                    key, value = kv
-                    add_or_update_value(current_section, key, value)
+                    add_val(current_section, *kv)
             else:
-                if "technique" not in meta and any(kw in line_content.lower() for kw in ["electrochemical", "impedance", "spectroscopy", "potentio", "galvano"]):
-                    meta["technique"] = line_content
+                if "technique" not in meta and any(kw in content.lower() for kw in ["electrochemical", "impedance", "spectroscopy", "potentio", "galvano"]):
+                    meta["technique"] = content
                     continue
 
-                if line_content.startswith("Cycle Definition"):
+                if content.startswith("Cycle Definition"):
                     in_parameters = True
-                    kv = split_key_value(line_content)
+                    kv = split_kv(content)
                     current_section = {"cycle_definition": kv[1]} if kv else {}
                     work_mode_list.append(current_section)
                     continue
 
                 if in_parameters and current_section is not None:
-                    # Match: parameter name (possibly with units in parentheses) followed by value
-                    # e.g., "E (V)               0.0000" or "Mode                Single sine"
-                    match = re.match(r"(.+?)\s{2,}(.+)", text_line)
+                    match = re.match(r"(.+?)\s{2,}(.+)", text)
                     if match:
-                        key_part, value = match.groups()
-                        add_or_update_value(current_section, key_part.strip(), value.strip())
-                    elif line_content:
-                        add_or_update_value(current_section, line_content, "")
-                # Only add to meta if we're not in parameters section
-                elif not in_parameters:
-                    kv = split_key_value(line_content)
+                        add_val(current_section, match.group(1).strip(), match.group(2).strip())
+                    else:
+                        add_val(current_section, content, "")
+                else:
+                    kv = split_kv(content)
                     if kv:
-                        key, value = kv
-                        if not value:
+                        k, v = kv
+                        if not v:
                             current_section = {}
-                            meta[key] = current_section
+                            meta[k] = current_section
                         else:
-                            add_or_update_value(meta, key, value)
+                            add_val(meta, k, v)
                             current_section = None
 
         if work_mode_list:
             meta["work_mode"] = work_mode_list
-
         return meta
 
     @staticmethod
     def _clean_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
         """Clean metadata to keep only essential fields from BioLogic files."""
         cleaned: dict[str, Any] = {}
+        file_info = metadata.get("file_info", {})
 
-        if "file_info" not in metadata:
-            return metadata
-
-        file_info = metadata["file_info"]
-
-        # Use raw keys from MPT file
-        test_info_keys = ["technique", "Electrode material", "Electrolyte", "Mass of active material", "Reference electrode", "Acquisition started on", "Operator"]
-        test_info = {key: file_info[key] for key in test_info_keys if key in file_info}
+        # Essential keys
+        test_keys = [
+            "technique",
+            "Electrode material",
+            "Electrolyte",
+            "Mass of active material",
+            "Reference electrode",
+            "Acquisition started on",
+            "Operator",
+        ]
+        test_info = {k: file_info[k] for k in test_keys if k in file_info}
 
         if "Saved on" in file_info:
-            saved_on = file_info["Saved on"]
-            if isinstance(saved_on, dict):
-                if "File" in saved_on and isinstance(saved_on.get("File"), str):
-                    test_info["name"] = saved_on["File"]
-                if "Directory" in saved_on and isinstance(saved_on.get("Directory"), str):
-                    test_info["file_path"] = saved_on["Directory"]
+            saved = file_info["Saved on"]
+            if isinstance(saved, dict):
+                if "File" in saved:
+                    test_info["name"] = saved["File"]
+                if "Directory" in saved:
+                    test_info["file_path"] = saved["Directory"]
 
         if "file_path" in file_info and "file_path" not in test_info:
             test_info["file_path"] = file_info["file_path"]
 
         if test_info:
             cleaned["test_information"] = test_info
+            cleaned.update({
+                "sample_name": test_info.get("name"),
+                "start_time": test_info.get("Acquisition started on"),
+                "operator": test_info.get("Operator"),
+                "active_material_mass": test_info.get("Mass of active material"),
+            })
 
-        proc_info_keys = ["Run on channel", "Ewe Ctrl range", "Electrode surface area", "Characteristic mass"]
-        proc_info = {key: file_info[key] for key in proc_info_keys if key in file_info}
-
+        proc_keys = ["Run on channel", "Ewe Ctrl range", "Electrode surface area", "Characteristic mass"]
+        proc_info = {k: file_info[k] for k in proc_keys if k in file_info}
         if proc_info:
             cleaned["channel_process_info"] = proc_info
+            if "Characteristic mass" in proc_info:
+                cleaned.setdefault("active_material_mass", proc_info["Characteristic mass"])
 
         if "work_mode" in file_info:
-            work_mode = file_info["work_mode"]
-            cleaned["work_mode"] = work_mode if isinstance(work_mode, list) else [work_mode]
+            wm = file_info["work_mode"]
+            cleaned["work_mode"] = wm if isinstance(wm, list) else [wm]
 
-        # Ensure technique is set at top level for standardizer
         cleaned["technique"] = file_info.get("technique", ["echem"])
         if isinstance(cleaned["technique"], str):
             cleaned["technique"] = [cleaned["technique"]]
 
-        # Merge with original metadata to ensure nothing is lost
-        final_meta = cleaned.copy()
-        final_meta.update(metadata)
-        return final_meta
+        return {**cleaned, **metadata}
 
     @staticmethod
-    def _clean_data(data: dict[str, Any], metadata: dict[str, Any] | None = None) -> pd.DataFrame:
-        """Clean data to keep only specified columns from BioLogic data."""
-        # Convert dict to DataFrame
-        if isinstance(data, dict):
-            data_copy = {k: v for k, v in data.items() if k != "_metadata"}
-            if not data_copy:
-                return pd.DataFrame()
-            try:
-                df = pd.DataFrame(data_copy)
-            except Exception:
-                return pd.DataFrame()
-        else:
-            return data if isinstance(data, pd.DataFrame) else pd.DataFrame()
+    def _clean_data(mpt_array: np.ndarray, metadata: dict[str, Any] | None = None, active_material_mass: Any = None) -> xr.Dataset:
+        """Clean data to filter specific columns and add calculated ones."""
+        n_records = len(mpt_array)
+        names = mpt_array.dtype.names or []
 
-        # Detect measurement type
-        is_peis = False
-        is_gpcl = False
-
-        if metadata:
-            technique = metadata.get("file_info", {}).get("technique", "")
-            is_peis = "Electrochemical Impedance" in technique or "PEIS" in technique
-            is_gpcl = "Galvanostatic Cycling" in technique or "GPCL" in technique
-
-        # Fallback detection based on columns (using raw keys)
-        if not is_peis and "freq/Hz" in df.columns and ("Re(Z)/Ohm" in df.columns or "-Im(Z)/Ohm" in df.columns):
+        technique = metadata.get("file_info", {}).get("technique", "") if metadata else ""
+        is_peis = "Electrochemical Impedance" in technique or "PEIS" in technique
+        is_gpcl = "Galvanostatic Cycling" in technique or "GPCL" in technique
+        if not is_peis and "freq/Hz" in names:
             is_peis = True
 
+        # Define columns to keep based on technique
         if is_peis:
-            peis_mapping = {
-                "record": None,
-                "cycle number": "cycle number",
-                "freq/Hz": "freq/Hz",
-                "Re(Z)/Ohm": "Re(Z)/Ohm",
-                "-Im(Z)/Ohm": "-Im(Z)/Ohm",
-                "|Z|/Ohm": "|Z|/Ohm",
-                "Phase(Z)/deg": "Phase(Z)/deg",
-            }
-
-            result_df = pd.DataFrame()
-            result_df["record"] = range(1, len(df) + 1)
-
-            for output_col, input_col in peis_mapping.items():
-                if output_col != "record" and input_col and input_col in df.columns:
-                    col_data = df[input_col]
-                    # For imaginary impedance, negate the values (convert -Im(Z) to Im(Z))
-                    if output_col == "-Im(Z)/Ohm":
-                        col_data = -col_data
-                    result_df[output_col] = col_data
-
-            return result_df if not result_df.empty else pd.DataFrame()
+            cols_to_keep = ["cycle number", "freq/Hz", "Re(Z)/Ohm", "-Im(Z)/Ohm", "|Z|/Ohm", "Phase(Z)/deg"]
         elif is_gpcl:
-            # GPCL (Galvanostatic Cycling with Potential Limitation) columns (using raw keys)
-            gpcl_mapping = {
-                "records": None,
-                "systime": None,
-                "time/s": "time/s",
-                "cycle number": "cycle number",
-                "Ewe/V": "Ewe/V",
-                "Ece/V": "Ece/V",
-                "I/mA": "I/mA",
-                "(Q-Qo)/mA.h": "(Q-Qo)/mA.h",
-                "voltage/V": None,
-            }
+            cols_to_keep = ["time/s", "cycle number", "Ewe/V", "Ece/V", "I/mA", "Capacity/mA.h"]
+        else:
+            cols_to_keep = list(names)
 
-            result_df = pd.DataFrame()
-            result_df["records"] = range(1, len(df) + 1)
+        # Filter and build data_vars (keep original names)
+        data_vars = {col: (["record"], mpt_array[col]) for col in cols_to_keep if col in names}
 
-            for output_col, input_col in gpcl_mapping.items():
-                if output_col == "records":
-                    continue
-                elif output_col == "systime":
-                    # Calculate systime = acquisition_started_on + time/s (YYYY-MM-DDTHH:MM:SS)
-                    try:
-                        acq_start = metadata.get("file_info", {}).get("Acquisition started on", "") if metadata else ""
-                        if acq_start and "time/s" in df.columns:
-                            start_dt = datetime.strptime(acq_start, "%m/%d/%Y %H:%M:%S.%f")
-                            systime_list = [datetime.fromtimestamp(start_dt.timestamp() + time_offset).strftime("%Y-%m-%dT%H:%M:%S") for time_offset in df["time/s"]]
-                            result_df["systime"] = systime_list
-                        else:
-                            result_df["systime"] = ""
-                    except Exception:
-                        result_df["systime"] = ""
-                elif output_col == "voltage/V":
-                    # Calculate voltage/V = Ewe/V - Ece/V
-                    ewe_v = df.get("Ewe/V")
-                    ece_v = df.get("Ece/V")
-                    if ewe_v is not None and ece_v is not None:
-                        result_df["voltage/V"] = ewe_v - ece_v
-                    elif ewe_v is not None:
-                        result_df["voltage/V"] = ewe_v
-                    elif ece_v is not None:
-                        result_df["voltage/V"] = -ece_v
-                    else:
-                        result_df["voltage/V"] = 0
-                elif input_col and input_col in df.columns:
-                    result_df[output_col] = df[input_col]
-                else:
-                    result_df[output_col] = 0
+        # Add calculated columns
+        if is_gpcl:
+            # voltage/V
+            ewe, ece = (mpt_array[k] if k in names else None for k in ("Ewe/V", "Ece/V"))
+            if ewe is not None and ece is not None:
+                data_vars["voltage/V"] = (["record"], ewe - ece)
+            elif ewe is not None:
+                data_vars["voltage/V"] = (["record"], ewe)
+            elif ece is not None:
+                data_vars["voltage/V"] = (["record"], -ece)
 
-            return result_df if not result_df.empty else pd.DataFrame()
+            # systime
+            try:
+                acq_start = metadata.get("file_info", {}).get("Acquisition started on", "") if metadata else ""
+                if acq_start and "time/s" in names:
+                    start_ts = datetime.strptime(acq_start, "%m/%d/%Y %H:%M:%S.%f").timestamp()
+                    systimes = [datetime.fromtimestamp(start_ts + t).strftime("%Y-%m-%dT%H:%M:%S") for t in mpt_array["time/s"]]
+                    data_vars["systime"] = (["record"], np.array(systimes))
+            except Exception as e:
+                logger.debug("Failed to calculate systime: %s", e)
 
-        return df
+            # SpeCap_cal/mAh/g
+            if active_material_mass and "Capacity/mA.h" in names:
+                try:
+                    m_str = str(active_material_mass).lower()
+                    m_val = float("".join(c for c in m_str if c.isdigit() or c == "."))
+                    m_g = m_val * (0.001 if "mg" in m_str else 1.0)
+                    if m_g > 0:
+                        data_vars["SpeCap_cal/mAh/g"] = (["record"], mpt_array["Capacity/mA.h"] / m_g)
+                except (ValueError, TypeError, ZeroDivisionError) as e:
+                    logger.debug("Failed to calculate SpeCap_cal/mAh/g: %s", e)
+
+        return xr.Dataset(data_vars, coords={"record": np.arange(n_records)})

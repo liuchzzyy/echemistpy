@@ -105,7 +105,7 @@ ruff format src/ tests/  # 代码格式化
 
 - [io/loaders.py](src/echemistpy/io/loaders.py): `load()` 协调整个数据加载和标准化流程
 - [io/saver.py](src/echemistpy/io/saver.py): `save_table()` 导出 `xarray.Dataset` 到各种格式
-- 所有数据使用 `xarray.Dataset` 作为内部表示，坐标名为 "row"
+- 所有数据使用 `xarray.Dataset` 作为内部表示，坐标名为 "record" (或 "row")
 - 数据标准化: `standardize_names()` 统一不同仪器的列名和单位
 
 ## 项目特定约定
@@ -122,7 +122,7 @@ ruff format src/ tests/  # 代码格式化
 - 时间列统一使用 `"time/s"` 标识符 (`t_str` 常量)
 - 电压列使用 `"Ewe/V"` (工作电极电位) 或 `"potential"`
 - 电流列使用 `"<I>/mA"` 或 `"current"`
-- 所有数据维度名称为 `"row"`
+- 所有数据维度名称为 `"record"` (或 `"row"`)
 - 数据预处理：基线校正 (`baseline_corrected`)、归一化 (`normalized_current`)
 - 分析器输出：`summary` (字典) + `tables` (xarray.Dataset 字典)
 - 读取器输出：`RawData` (包含 `xarray.Dataset`) + `RawDataInfo` (包含元数据字典)

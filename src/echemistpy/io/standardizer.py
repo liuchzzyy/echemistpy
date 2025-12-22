@@ -144,9 +144,12 @@ class DataStandardizer(HasTraits):
         "Instrument": "instrument",
         "Operator": "operator",
         "Sample": "sample_name",
+        "test_name": "sample_name",
         "Technique": "technique",
         "File": "filename",
         "Comments": "remarks",
+        "Mass of active material": "active_material_mass",
+        "Characteristic mass": "active_material_mass",
     }
 
     def __init__(self, dataset: xr.Dataset, techniques: list[str] | str = "unknown", **kwargs):
@@ -252,7 +255,11 @@ class DataStandardizer(HasTraits):
                 stacklevel=2,
             )
             # Create placeholder columns with NaN values
-            if "row" in self.dataset.coords:
+            if "record" in self.dataset.coords:
+                n_rows = len(self.dataset.coords["record"])
+                for col in missing_cols:
+                    self.dataset[col] = ("record", np.full(n_rows, np.nan))
+            elif "row" in self.dataset.coords:
                 n_rows = len(self.dataset.coords["row"])
                 for col in missing_cols:
                     self.dataset[col] = ("row", np.full(n_rows, np.nan))
@@ -263,9 +270,9 @@ class DataStandardizer(HasTraits):
         """Validate that data follows echemistpy format conventions."""
         issues = {"warnings": [], "errors": []}
 
-        # Check row dimension
-        if "row" not in self.dataset.coords:
-            issues["errors"].append("Missing 'row' coordinate dimension")
+        # Check record/row dimension
+        if "record" not in self.dataset.coords and "row" not in self.dataset.coords:
+            issues["errors"].append("Missing 'record' or 'row' coordinate dimension")
 
         # Check for technique-specific required columns
         technique_requirements = {
@@ -392,6 +399,7 @@ def standardize_names(
         instrument=standardized_meta.get("instrument"),
         operator=standardized_meta.get("operator"),
         start_time=standardized_meta.get("start_time"),
+        active_material_mass=standardized_meta.get("active_material_mass"),
         others=standardized_meta,
     )
 

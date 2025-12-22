@@ -39,8 +39,10 @@ def save_dataset(
         # Convert to pandas and save
         sep = "\t" if ext == "tsv" else ","
         df = dataset.to_dataframe()
-        # If it's a simple 1D dataset with 'row' dimension, we might want to reset index
-        if "row" in df.index.names:
+        # If it's a simple 1D dataset with 'record' or 'row' dimension, we might want to reset index
+        if "record" in df.index.names:
+            df = df.reset_index(drop=True)
+        elif "row" in df.index.names:
             df = df.reset_index(drop=True)
         df.to_csv(path, sep=sep, index=False, **kwargs)
 

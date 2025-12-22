@@ -12,7 +12,6 @@ from typing import TYPE_CHECKING, Any, Dict, Optional, Tuple
 
 from echemistpy.io.plugin_manager import get_plugin_manager
 from echemistpy.io.standardizer import (
-    detect_technique,
     standardize_names,
 )
 from echemistpy.io.structures import (
@@ -39,6 +38,11 @@ def load(
     path: str | Path,
     fmt: Optional[str] = None,
     technique: Optional[str | list[str]] = None,
+    sample_name: Optional[str] = None,
+    start_time: Optional[str] = None,
+    instrument: Optional[str] = None,
+    operator: Optional[str] = None,
+    active_material_mass: Optional[str] = None,
     standardize: bool = True,
     **kwargs: Any,
 ) -> Tuple[RawData, RawDataInfo]:
@@ -48,6 +52,11 @@ def load(
         path: Path to the data file
         fmt: Optional format override (e.g., '.mpt')
         technique: Optional technique hint (string or list of strings)
+        sample_name: Optional sample name override
+        start_time: Optional start time override
+        instrument: Optional instrument name override
+        operator: Optional operator name override
+        active_material_mass: Optional active material mass override
         standardize: Whether to automatically standardize the data (default: True)
         **kwargs: Additional arguments passed to the specific reader
 
@@ -70,11 +79,41 @@ def load(
 
     raw_data, raw_info = reader.load()
 
+    # Apply manual overrides if provided
+    if sample_name:
+        raw_info.sample_name = sample_name
+    if start_time:
+        raw_info.start_time = start_time
+    if instrument:
+        raw_info.instrument = instrument
+    if operator:
+        raw_info.operator = operator
+    if active_material_mass:
+        raw_info.active_material_mass = active_material_mass
+    if technique:
+        raw_info.technique = [technique] if isinstance(technique, str) else technique
+
     if not standardize:
         return raw_data, raw_info
 
     # Auto-standardize
-    return standardize_names(raw_data, raw_info, technique_hint=technique)
+    standardized_data, standardized_info = standardize_names(raw_data, raw_info, technique_hint=technique)
+
+    # Ensure manual overrides persist after standardization if they were provided
+    if sample_name:
+        standardized_info.sample_name = sample_name
+    if start_time:
+        standardized_info.start_time = start_time
+    if instrument:
+        standardized_info.instrument = instrument
+    if operator:
+        standardized_info.operator = operator
+    if active_material_mass:
+        standardized_info.active_material_mass = active_material_mass
+    if technique:
+        standardized_info.technique = [technique] if isinstance(technique, str) else technique
+
+    return standardized_data, standardized_info
 
 
 def _register_loader(extensions: list[str], loader_class: Any) -> None:

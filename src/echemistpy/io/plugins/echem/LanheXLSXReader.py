@@ -21,6 +21,7 @@ class LanheXLSXReader(HasTraits):
     """Reader for LANHE exported XLSX files."""
 
     filepath = Unicode()
+    active_material_mass = Unicode(allow_none=True)
     technique: ClassVar[list[str]] = [
         "echem",
     ]
@@ -45,27 +46,37 @@ class LanheXLSXReader(HasTraits):
 
         # Clean metadata and data
         cleaned_metadata = self._clean_metadata(metadata)
-        cleaned_data = self._clean_data(data_dict)
+        mass = self.active_material_mass or cleaned_metadata.get("active_material_mass")
+        cleaned_data = self._clean_data(data_dict, active_material_mass=mass)
 
         # Convert to xarray Dataset
-        ds = xr.Dataset({k: (("row",), v) for k, v in cleaned_data.items()})
+        ds = xr.Dataset({k: (("record",), v) for k, v in cleaned_data.items()})
+
+        # Use Record or similar index as the coordinate for the 'record' dimension
+        for index_col in ["Record", "record", "Row", "row", "Index", "index"]:
+            if index_col in ds:
+                ds = ds.set_index(record=index_col)
+                break
 
         # Create RawData and RawDataInfo
         raw_data = RawData(data=ds)
 
-        # Extract top-level metadata from cleaned_metadata
-        sample_name = str(cleaned_metadata.get("test_name", "Unknown"))
+        # Extract top-level metadata
         start_time = cleaned_metadata.get("start_time")
-        if hasattr(start_time, "strftime"):
+        if isinstance(start_time, datetime):
             start_time = start_time.strftime("%Y-%m-%d %H:%M:%S")
-        operator = cleaned_metadata.get("operator")
+
+        tech_list = list(self.technique)
+        if "gcd" not in tech_list:
+            tech_list.append("gcd")
 
         raw_info = RawDataInfo(
-            sample_name=sample_name,
+            sample_name=str(cleaned_metadata.get("test_name", "Unknown")),
             start_time=start_time,
-            operator=operator,
-            technique=self.technique,
+            operator=cleaned_metadata.get("operator"),
+            technique=tech_list,
             instrument=self.instrument,
+            active_material_mass=mass,
             others=cleaned_metadata,
         )
 
@@ -98,26 +109,28 @@ class LanheXLSXReader(HasTraits):
             if not row[0]:
                 continue
 
-            # Header detection
-            if str(row[0]).strip().lower() == "cycle" and len(row) > 15 and "step" in " ".join(str(c).lower() for c in row[:10] if c):
-                header = [str(c).strip() for c in row if c and str(c).strip()]
-                continue
+            # Header detection: look for "Cycle" and "Step" in the first few columns
+            if not header and str(row[0]).strip().lower() == "cycle" and len(row) > 10:
+                row_str = " ".join(str(c).lower() for c in row[:10] if c)
+                if "step" in row_str:
+                    header = [str(c).strip() for c in row if c and str(c).strip()]
+                    continue
 
-            # Data extraction
-            if header and all(row[:3]):
+            # Data extraction: ensure first 3 columns are numeric (Cycle, Step, Index/Record)
+            if header:
                 try:
-                    int(row[0]), int(row[1]), int(row[2])
-                    mode = str(row[3]) if len(row) > 3 else ""
-                    if any(kw in mode for kw in ["REST", "CRATE", "LOOP", "END", "CHARGE", "DISCHARGE"]):
-                        rows.append(row)
+                    # LANHE data rows usually start with 3 integers
+                    [int(c) for c in row[:3]]
+                    rows.append(row)
                 except (ValueError, TypeError):
-                    pass
+                    continue
 
         if not (header and rows):
             return {}
 
+        # Transpose rows to columns and convert values
         data = {h: [self._convert_time(r[i]) if i < len(r) else None for r in rows] for i, h in enumerate(header)}
-        data["_metadata"] = {"sheet_name": data_sheet_name, "num_rows": len(rows), "num_columns": len(header), "columns": header}
+        data["_metadata"] = {"sheet_name": data_sheet_name, "num_rows": len(rows), "columns": header}
         return data
 
     def _read_test_info(self, wb: openpyxl.Workbook, metadata: dict[str, Any]) -> None:
@@ -229,59 +242,62 @@ class LanheXLSXReader(HasTraits):
         """Clean metadata to keep only essential fields."""
         cleaned = {}
 
-        def get_val(d, key):
-            k = next((k for k in d if k.lower() == key.lower()), None)
-            return d.get(k) if k else None
-
         # Test Information
-        if "Test_Information" in metadata:
-            info = metadata["Test_Information"]
-            for key in ["Test name", "Start time", "Finish time", "Active material", "Operator"]:
-                val = get_val(info, key)
-                if val:
-                    cleaned[key.lower().replace(" ", "_")] = val
+        if info := metadata.get("Test_Information"):
+            mapping = {
+                "Test name": "test_name",
+                "Start time": "start_time",
+                "Finish time": "finish_time",
+                "Active material": "active_material",
+                "Operator": "operator",
+            }
+            for raw_key, clean_key in mapping.items():
+                # Case-insensitive lookup
+                actual_key = next((k for k in info if k.lower() == raw_key.lower()), None)
+                if actual_key:
+                    cleaned[clean_key] = info[actual_key]
 
-            # Parse Active material
-            am = cleaned.get("active_material")
-            if am and " Active material: " in str(am):
-                parts = str(am).split(" Active material: ")
-                cleaned["nominal_specific_capacity"] = parts[0].replace("Nominal specific capacity: ", "").strip()
-                cleaned["active_material_mass"] = parts[1].strip()
+            # Parse Active material string: "Nominal specific capacity: 372 mAh/g Active material: 1.23 mg"
+            if am := cleaned.get("active_material"):
+                am_str = str(am)
+                if "Active material:" in am_str:
+                    parts = am_str.split("Active material:")
+                    cleaned["active_material_mass"] = parts[1].strip()
+                    if "Nominal specific capacity:" in parts[0]:
+                        cleaned["nominal_specific_capacity"] = parts[0].replace("Nominal specific capacity:", "").strip()
 
         # Channel Process Info
-        if "Channel_Process_Info" in metadata:
-            info = metadata["Channel_Process_Info"]
-            proc = {}
-            for key in ["Channel Number", "Name", "Description", "Unit Scheme", "Safety", "Work_Mode"]:
-                val = get_val(info, key)
-                if val:
-                    proc[key.lower().replace(" ", "_")] = val
-            cleaned["channel_process_info"] = proc
+        if proc := metadata.get("Channel_Process_Info"):
+            proc_fields = ["Channel Number", "Name", "Description", "Unit Scheme", "Safety", "Work_Mode"]
+            cleaned["channel_process_info"] = {k.lower().replace(" ", "_"): proc[k] for k in proc_fields if k in proc}
 
-        # Technique
+        # Ensure technique is a list
         tech = metadata.get("technique", ["echem"])
         cleaned["technique"] = [tech] if isinstance(tech, str) else tech
 
         return {**metadata, **cleaned}
 
     @staticmethod
-    def _clean_data(data: dict[str, Any]) -> dict[str, Any]:
+    def _clean_data(data: dict[str, Any], active_material_mass: Any = None) -> dict[str, Any]:
         """Return data with original headers, filtering for requested columns."""
-        # Columns to keep as requested by user
-        keep_cols = [
-            "Record",
-            "Cycle",
-            "SysTime",
-            "TestTime",
-            "Voltage/V",
-            "Current/uA",
-            "Capacity/uAh",
-            "SpeCap/mAh/g",
-            "dQdV/uAh/V",
-            "dVdQ/V/uAh",
-        ]
+        keep_cols = {"Record", "SysTime", "Cycle", "TestTime", "Voltage/V", "Current/uA", "Capacity/uAh", "SpeCap/mAh/g", "dQdV/uAh/V", "dVdQ/V/uAh"}
 
-        # Filter the dictionary to keep only requested columns that exist
         cleaned_data = {k: v for k, v in data.items() if k in keep_cols}
+
+        # Calculate SpeCap_cal/mAh/g if mass is available
+        if active_material_mass and "Capacity/uAh" in data:
+            try:
+                mass_str = str(active_material_mass).lower()
+                # Extract numeric value
+                mass_val = float("".join(c for c in mass_str if c.isdigit() or c == "."))
+                # Determine unit factor
+                factor = 0.001 if "mg" in mass_str else 1.0
+                mass_g = mass_val * factor
+
+                if mass_g > 0:
+                    # SpeCap (mAh/g) = (Capacity (uAh) / 1000) / mass (g)
+                    cleaned_data["SpeCap_cal/mAh/g"] = [(float(c) / 1000.0) / mass_g if c is not None else None for c in data["Capacity/uAh"]]
+            except (ValueError, TypeError, ZeroDivisionError):
+                logger.debug("Failed to calculate SpeCap_cal/mAh/g with mass: %s", active_material_mass)
 
         return cleaned_data

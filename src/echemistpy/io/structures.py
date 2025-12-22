@@ -22,6 +22,7 @@ class MetadataInfoMixin:
         "start_time": None,
         "instrument": None,
         "operator": None,
+        "active_material_mass": None,
     }
 
     def __init__(self, **kwargs):
@@ -223,6 +224,7 @@ class RawDataInfo(HasTraits, MetadataInfoMixin):
     start_time = Unicode(None, allow_none=True)
     operator = Unicode(None, allow_none=True)
     instrument = Unicode(None, allow_none=True)
+    active_material_mass = Unicode(None, allow_none=True)
     others = Dict(help="Dictionary containing all metadata key-value pairs")
 
     def to_dict(self) -> dict[str, Any]:
