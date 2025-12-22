@@ -93,44 +93,7 @@ def save_analysis_result(
 
 
 __all__ = [
+    "save_analysis_result",
     "save_dataset",
     "save_measurement",
-    "save_analysis_result",
 ]
-        import json
-
-        # If measurement is provided, save it first
-        if measurement and measurement_info:
-            meas_dataset = measurement.data.copy()
-            # Sanitize variable names
-            rename_dict = {name: name.replace("/", "_") for name in meas_dataset.data_vars if "/" in name}
-            if rename_dict:
-                meas_dataset = meas_dataset.rename(rename_dict)
-
-            meas_metadata = measurement_info.to_dict()
-            meas_dataset.attrs["echemistpy_metadata"] = json.dumps(meas_metadata)
-            meas_dataset.to_netcdf(destination, group="measurement", mode="w", engine="h5netcdf")
-            mode = "a"
-        else:
-            mode = "w"
-
-        # Save results
-        res_dataset = results.data.copy()
-        rename_dict = {name: name.replace("/", "_") for name in res_dataset.data_vars if "/" in name}
-        if rename_dict:
-            res_dataset = res_dataset.rename(rename_dict)
-
-        res_dataset.attrs["echemistpy_results_metadata"] = json.dumps(results_metadata)
-        res_dataset.to_netcdf(destination, group="results", mode=mode, engine="h5netcdf")
-    else:
-        # For other formats, just save results
-        pm = get_plugin_manager()
-        pm.save_data(results.data, results_metadata, destination, fmt=fmt, **kwargs)
-
-
-__all__ = [
-    "save",
-    "save_measurement",
-    "save_results",
-]
-

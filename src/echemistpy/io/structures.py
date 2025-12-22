@@ -245,6 +245,12 @@ class MeasurementInfo(MetadataInfoMixin):
     technique-specific metadata stored in the 'others' dictionary.
     """
 
+    technique: str = "Unknown"
+    sample_name: str = "Unknown"
+    start_time: Optional[str] = None
+    end_time: Optional[str] = None
+    instrument: Optional[str] = None
+    operator: Optional[str] = None
     others: dict[str, Any] = field(default_factory=dict)
 
 

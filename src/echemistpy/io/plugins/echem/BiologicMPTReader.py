@@ -8,11 +8,8 @@ Main classes:
 Based on: https://github.com/echemdata/galvani/blob/master/galvani/BioLogic.py
 """
 
-import argparse
-import json
 import logging
 import re
-import sys
 import time
 from collections import OrderedDict, defaultdict
 from datetime import date, datetime
@@ -22,7 +19,10 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
-from traitlets import Dict, HasTraits, Instance, Unicode, Union, validate
+import xarray as xr
+from traitlets import HasTraits, Unicode
+
+from echemistpy.io.structures import RawData, RawDataInfo
 
 logger = logging.getLogger(__name__)
 
@@ -152,54 +152,52 @@ def comma_converter(float_text: bytes) -> float:
 def mpt_file(file_or_path: str | Path, encoding: str = "latin1") -> tuple[np.ndarray, list[bytes]]:
     """Open .mpt files as numpy record arrays with comments."""
     if isinstance(file_or_path, (str, Path)):
-        mpt_file = open(file_or_path, "rb")
-        should_close = True
+        with open(file_or_path, "rb") as mpt_file:
+            return _read_mpt_content(mpt_file, encoding)
     else:
-        mpt_file = file_or_path
-        should_close = False
+        return _read_mpt_content(file_or_path, encoding)
 
-    try:
-        magic = next(mpt_file).strip()
-        if magic not in {b"EC-Lab ASCII FILE", b"BT-Lab ASCII FILE"}:
-            raise ValueError(f"Bad first line: {magic!r}")
 
-        nb_headers_match = re.match(rb"Nb header lines : (\d+)\s*$", next(mpt_file))
-        if not nb_headers_match:
-            raise ValueError("Invalid header line format")
-        nb_headers = int(nb_headers_match.group(1))
-        if nb_headers < 3:
-            raise ValueError(f"Too few header lines: {nb_headers}")
+def _read_mpt_content(mpt_file: Any, encoding: str = "latin1") -> tuple[np.ndarray, list[bytes]]:
+    """Internal helper to read MPT content from a file object."""
+    magic = next(mpt_file).strip()
+    if magic not in {b"EC-Lab ASCII FILE", b"BT-Lab ASCII FILE"}:
+        raise ValueError(f"Bad first line: {magic!r}")
 
-        comments = [next(mpt_file) for _ in range(nb_headers - 3)]
+    nb_headers_match = re.match(rb"Nb header lines : (\d+)\s*$", next(mpt_file))
+    if not nb_headers_match:
+        raise ValueError("Invalid header line format")
+    nb_headers = int(nb_headers_match.group(1))
+    if nb_headers < 3:
+        raise ValueError(f"Too few header lines: {nb_headers}")
 
-        fieldnames_raw = next(mpt_file).decode(encoding).strip()
-        fieldnames = fieldnames_raw.split("\t")
+    comments = [next(mpt_file) for _ in range(nb_headers - 3)]
 
-        current_pos = mpt_file.tell()
-        first_data_line = next(mpt_file).decode(encoding).strip()
-        mpt_file.seek(current_pos)
-        data_column_count = len(first_data_line.split("\t"))
+    fieldnames_raw = next(mpt_file).decode(encoding).strip()
+    fieldnames = fieldnames_raw.split("\t")
 
-        if len(fieldnames) > data_column_count:
-            fieldnames = fieldnames[:data_column_count]
+    current_pos = mpt_file.tell()
+    first_data_line = next(mpt_file).decode(encoding).strip()
+    mpt_file.seek(current_pos)
+    data_column_count = len(first_data_line.split("\t"))
 
-        for i, fn in enumerate(fieldnames):
-            if not fn or not fn.strip():
-                fieldnames[i] = f"empty_column_{i}"
+    if len(fieldnames) > data_column_count:
+        fieldnames = fieldnames[:data_column_count]
 
-        record_type = np.dtype(list(map(fieldname_to_dtype, fieldnames)))
+    for i, fn in enumerate(fieldnames):
+        if not fn or not fn.strip():
+            fieldnames[i] = f"empty_column_{i}"
 
-        def str_to_float(s: str) -> float:
-            """Convert str to float, handling ',' as decimal point."""
-            return float(s.replace(",", "."))
+    record_type = np.dtype(list(map(fieldname_to_dtype, fieldnames)))
 
-        converter_dict: dict[int, Any] = dict.fromkeys(range(len(fieldnames)), str_to_float)
-        mpt_array = np.loadtxt(mpt_file, dtype=record_type, converters=converter_dict)  # type: ignore[arg-type]
+    def str_to_float(s: str) -> float:
+        """Convert str to float, handling ',' as decimal point."""
+        return float(s.replace(",", "."))
 
-        return mpt_array, comments
-    finally:
-        if should_close:
-            mpt_file.close()
+    converter_dict: dict[int, Any] = dict.fromkeys(range(len(fieldnames)), str_to_float)
+    mpt_array = np.loadtxt(mpt_file, dtype=record_type, converters=converter_dict)  # type: ignore[arg-type]
+
+    return mpt_array, comments
 
 
 VMPmodule_hdr_v1 = np.dtype([
@@ -509,45 +507,50 @@ LOOP_MAGIC = "VMP EXPERIMENT LOOP INDEXES"
 # ======================================================================
 
 
-class BiologicDataReader(HasTraits):
-    """Reader for BioLogic MPT files with traitlets support and metadata extraction."""
+class BiologicMPTReader(HasTraits):
+    """Reader for BioLogic MPT files."""
 
-    # Traitlets properties
-    filepath = Union([Instance(Path), Unicode()], allow_none=True, help="Path to BioLogic MPT file or folder").tag(config=True)
+    filepath = Unicode()
 
-    metadata = Dict(help="Extracted metadata from BioLogic file")
-    data = Dict(help="Measurement data from BioLogic file")
-
-    def __init__(self, filepath: Path | str | None = None, **kwargs):
-        """Initialize reader with optional filepath using traitlets."""
+    def __init__(self, filepath: str | Path | None = None, **kwargs):
         super().__init__(**kwargs)
-        if filepath is not None:
-            self.filepath = filepath  # Validator will handle conversion
+        if filepath:
+            self.filepath = str(filepath)
 
-    @validate("filepath")
-    def _validate_filepath(self, proposal):
-        """Validate filepath and convert to Path if needed."""
-        value = proposal["value"]
-        if value is None or isinstance(value, Path):
-            return value
-        if isinstance(value, str):
-            return Path(value)
-        raise TypeError(f"filepath must be Path or str, got {type(value)}")
-
-    def _read_biologic_file(self) -> tuple[dict[str, Any], dict[str, Any]]:
-        """Read metadata and data from BioLogic MPT file."""
+    def load(self) -> tuple[RawData, RawDataInfo]:
+        """Load BioLogic MPT file and return RawData and RawDataInfo."""
         if not self.filepath:
             raise ValueError("filepath not set")
 
-        suffix = self.filepath.suffix.lower()
-        if suffix == ".mpt":
-            return self._read_mpt_file()
-        else:
-            raise ValueError(f"Only .mpt files are supported. Received: {suffix}")
+        path = Path(self.filepath)
+        if not path.exists():
+            raise FileNotFoundError(f"File not found: {path}")
+
+        # Read raw data and metadata
+        metadata, data_dict = self._read_mpt_file()
+
+        # Clean metadata and data
+        cleaned_metadata = self._clean_metadata(metadata)
+        cleaned_df = self._clean_data(data_dict, metadata)
+
+        # Convert to xarray Dataset
+        ds = xr.Dataset.from_dataframe(cleaned_df)
+        if "index" in ds.coords:
+            ds = ds.rename({"index": "row"})
+        elif "record" in ds.coords:
+            ds = ds.rename({"record": "row"})
+        elif "records" in ds.coords:
+            ds = ds.rename({"records": "row"})
+
+        # Create RawData and RawDataInfo
+        raw_data = RawData(data=ds)
+        raw_info = RawDataInfo(meta=cleaned_metadata)
+
+        return raw_data, raw_info
 
     def _read_mpt_file(self) -> tuple[dict[str, Any], dict[str, Any]]:
         """Read metadata and data from MPT file."""
-        mpt_array, comments = mpt_file(self.filepath)
+        mpt_array, comments = mpt_file(Path(self.filepath))
 
         metadata = {
             "file_info": self._parse_mpt_metadata(list(comments)),
@@ -556,17 +559,21 @@ class BiologicDataReader(HasTraits):
         }
 
         column_names: list[str] = list(mpt_array.dtype.names or [])
-        _, unique_col_names = self._get_unique_column_names(column_names)
+
+        # Ensure unique column names without normalization
+        unique_col_names = []
+        seen = {}
+        for name in column_names:
+            if name not in seen:
+                unique_col_names.append(name)
+                seen[name] = 1
+            else:
+                seen[name] += 1
+                unique_col_names.append(f"{name}_{seen[name]}")
 
         data_dict = {unique_name: mpt_array[raw_name].tolist() for raw_name, unique_name in zip(column_names, unique_col_names, strict=True)}
-        data_dict["_metadata"] = {
-            "file_type": "MPT",
-            "num_rows": len(mpt_array),
-            "num_columns": len(column_names),
-            "columns": unique_col_names,
-        }
 
-        return self._normalize_dict_keys(metadata), data_dict
+        return metadata, data_dict
 
     @staticmethod
     def _parse_mpt_metadata(comments: list[bytes | str]) -> dict[str, Any]:
@@ -639,14 +646,12 @@ class BiologicDataReader(HasTraits):
                 if in_parameters and current_section is not None:
                     # Match: parameter name (possibly with units in parentheses) followed by value
                     # e.g., "E (V)               0.0000" or "Mode                Single sine"
-                    match = re.match(r"(.+?)\s{2,}(.+)", line)
+                    match = re.match(r"(.+?)\s{2,}(.+)", text_line)
                     if match:
                         key_part, value = match.groups()
-                        # Normalize the key by removing units in parentheses
-                        key_normalized = BiologicDataReader._normalize_key(key_part.strip())
-                        add_or_update_value(current_section, key_normalized, value.strip())
+                        add_or_update_value(current_section, key_part.strip(), value.strip())
                     elif line_content:
-                        add_or_update_value(current_section, BiologicDataReader._normalize_key(line_content), "")
+                        add_or_update_value(current_section, line_content, "")
                 # Only add to meta if we're not in parameters section
                 elif not in_parameters:
                     kv = split_key_value(line_content)
@@ -665,73 +670,6 @@ class BiologicDataReader(HasTraits):
         return meta
 
     @staticmethod
-    def _normalize_key(key: str) -> str:
-        """Normalize key: lowercase, handle special chars."""
-        key = str(key).lower()
-        # Remove brackets and pipes, replace special chars with underscores
-        for char, replacement in [("<", ""), (">", ""), ("|", ""), ("/", "_"), (" ", "_"), ("-", "_"), ("(", ""), (")", "")]:
-            key = key.replace(char, replacement)
-        # Collapse multiple underscores
-        return re.sub(r"_+", "_", key).strip("_")
-
-    @staticmethod
-    def _get_unique_column_names(raw_column_names: list[str]) -> tuple[list[str], list[str]]:
-        """Convert raw column names to unique normalized names."""
-        normalized_names = [BiologicDataReader._normalize_key(name) for name in raw_column_names]
-        name_counts: dict[str, list[int]] = defaultdict(list)
-
-        for i, norm_name in enumerate(normalized_names):
-            name_counts[norm_name].append(i)
-
-        unique_names = []
-        for i, norm_name in enumerate(normalized_names):
-            if len(name_counts[norm_name]) == 1:
-                unique_names.append(norm_name)
-            else:
-                occurrence_num = name_counts[norm_name].index(i)
-                unique_names.append(f"{norm_name}_{chr(ord('a') + occurrence_num)}")
-
-        final_unique_names = []
-        seen = set()
-        for original_name in unique_names:
-            if original_name not in seen:
-                final_unique_names.append(original_name)
-                seen.add(original_name)
-            else:
-                counter = 2
-                while f"{original_name}_{counter}" in seen:
-                    counter += 1
-                new_name = f"{original_name}_{counter}"
-                final_unique_names.append(new_name)
-                seen.add(new_name)
-
-        return normalized_names, final_unique_names
-
-    @staticmethod
-    def _normalize_dict_keys(data: dict) -> dict:
-        """Recursively normalize all dictionary keys to lowercase and replace special chars."""
-        if not isinstance(data, dict):
-            return data
-
-        normalized: dict[str, Any] = {}
-        for key, value in data.items():
-            # Skip empty dicts
-            if isinstance(value, dict) and not value:
-                continue
-
-            new_key = BiologicDataReader._normalize_key(key)
-
-            # Recursively process nested structures
-            if isinstance(value, dict):
-                normalized[new_key] = BiologicDataReader._normalize_dict_keys(value)
-            elif isinstance(value, list):
-                normalized[new_key] = [BiologicDataReader._normalize_dict_keys(item) if isinstance(item, dict) else item for item in value]
-            else:
-                normalized[new_key] = value
-
-        return normalized
-
-    @staticmethod
     def _clean_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
         """Clean metadata to keep only essential fields from BioLogic files."""
         cleaned: dict[str, Any] = {}
@@ -741,16 +679,17 @@ class BiologicDataReader(HasTraits):
 
         file_info = metadata["file_info"]
 
-        test_info_keys = ["technique", "electrode_material", "electrolyte", "mass_of_active_material", "reference_electrode", "acquisition_started_on"]
+        # Use raw keys from MPT file
+        test_info_keys = ["technique", "Electrode material", "Electrolyte", "Mass of active material", "Reference electrode", "Acquisition started on"]
         test_info = {key: file_info[key] for key in test_info_keys if key in file_info}
 
-        if "saved_on" in file_info:
-            saved_on = file_info["saved_on"]
+        if "Saved on" in file_info:
+            saved_on = file_info["Saved on"]
             if isinstance(saved_on, dict):
-                if "file" in saved_on and isinstance(saved_on.get("file"), str):
-                    test_info["name"] = saved_on["file"]
-                if "directory" in saved_on and isinstance(saved_on.get("directory"), str):
-                    test_info["file_path"] = saved_on["directory"]
+                if "File" in saved_on and isinstance(saved_on.get("File"), str):
+                    test_info["name"] = saved_on["File"]
+                if "Directory" in saved_on and isinstance(saved_on.get("Directory"), str):
+                    test_info["file_path"] = saved_on["Directory"]
 
         if "file_path" in file_info and "file_path" not in test_info:
             test_info["file_path"] = file_info["file_path"]
@@ -758,7 +697,7 @@ class BiologicDataReader(HasTraits):
         if test_info:
             cleaned["test_information"] = test_info
 
-        proc_info_keys = ["run_on_channel", "ewe_ctrl_range", "electrode_surface_area", "characteristic_mass"]
+        proc_info_keys = ["Run on channel", "Ewe Ctrl range", "Electrode surface area", "Characteristic mass"]
         proc_info = {key: file_info[key] for key in proc_info_keys if key in file_info}
 
         if proc_info:
@@ -794,19 +733,19 @@ class BiologicDataReader(HasTraits):
             is_peis = "Electrochemical Impedance" in technique or "PEIS" in technique
             is_gpcl = "Galvanostatic Cycling" in technique or "GPCL" in technique
 
-        # Fallback detection based on columns
-        if not is_peis and "freq_hz" in df.columns and ("rez_ohm" in df.columns or "re_z_ohm" in df.columns):
+        # Fallback detection based on columns (using raw keys)
+        if not is_peis and "freq/Hz" in df.columns and ("Re(Z)/Ohm" in df.columns or "-Im(Z)/Ohm" in df.columns):
             is_peis = True
 
         if is_peis:
             peis_mapping = {
                 "record": None,
-                "cycle_number": "cycle_number",
-                "freq_hz": "freq_hz",
-                "re_z_ohm": "rez_ohm",
-                "im_z_ohm": "imz_ohm",
-                "z_ohm": "z_ohm",
-                "phase_z_deg": "phasez_deg",
+                "cycle number": "cycle number",
+                "freq/Hz": "freq/Hz",
+                "Re(Z)/Ohm": "Re(Z)/Ohm",
+                "-Im(Z)/Ohm": "-Im(Z)/Ohm",
+                "|Z|/Ohm": "|Z|/Ohm",
+                "Phase(Z)/deg": "Phase(Z)/deg",
             }
 
             result_df = pd.DataFrame()
@@ -816,23 +755,23 @@ class BiologicDataReader(HasTraits):
                 if output_col != "record" and input_col and input_col in df.columns:
                     col_data = df[input_col]
                     # For imaginary impedance, negate the values (convert -Im(Z) to Im(Z))
-                    if output_col == "im_z_ohm":
+                    if output_col == "-Im(Z)/Ohm":
                         col_data = -col_data
                     result_df[output_col] = col_data
 
             return result_df if not result_df.empty else pd.DataFrame()
         elif is_gpcl:
-            # GPCL (Galvanostatic Cycling with Potential Limitation) columns
+            # GPCL (Galvanostatic Cycling with Potential Limitation) columns (using raw keys)
             gpcl_mapping = {
                 "records": None,
                 "systime": None,
-                "time_s": "time_s",
-                "cycle_number": "cycle_number",
-                "ewe_v": "ewe_v",
-                "ece_v": "ece_v",
-                "i_ma": "i_ma",
-                "capacity_ma.h": "capacity_ma.h",
-                "voltage_v": None,
+                "time/s": "time/s",
+                "cycle number": "cycle number",
+                "Ewe/V": "Ewe/V",
+                "Ece/V": "Ece/V",
+                "I/mA": "I/mA",
+                "(Q-Qo)/mA.h": "(Q-Qo)/mA.h",
+                "voltage/V": None,
             }
 
             result_df = pd.DataFrame()
@@ -842,29 +781,29 @@ class BiologicDataReader(HasTraits):
                 if output_col == "records":
                     continue
                 elif output_col == "systime":
-                    # Calculate systime = acquisition_started_on + time_s (YYYY-MM-DDTHH:MM:SS)
+                    # Calculate systime = acquisition_started_on + time/s (YYYY-MM-DDTHH:MM:SS)
                     try:
-                        acq_start = metadata.get("file_info", {}).get("acquisition_started_on", "") if metadata else ""
-                        if acq_start and "time_s" in df.columns:
+                        acq_start = metadata.get("file_info", {}).get("Acquisition started on", "") if metadata else ""
+                        if acq_start and "time/s" in df.columns:
                             start_dt = datetime.strptime(acq_start, "%m/%d/%Y %H:%M:%S.%f")
-                            systime_list = [datetime.fromtimestamp(start_dt.timestamp() + time_offset).strftime("%Y-%m-%dT%H:%M:%S") for time_offset in df["time_s"]]
+                            systime_list = [datetime.fromtimestamp(start_dt.timestamp() + time_offset).strftime("%Y-%m-%dT%H:%M:%S") for time_offset in df["time/s"]]
                             result_df["systime"] = systime_list
                         else:
                             result_df["systime"] = ""
                     except Exception:
                         result_df["systime"] = ""
-                elif output_col == "voltage_v":
-                    # Calculate voltage_v = ewe_v - ece_v
-                    ewe_v = df.get("ewe_v")
-                    ece_v = df.get("ece_v")
+                elif output_col == "voltage/V":
+                    # Calculate voltage/V = Ewe/V - Ece/V
+                    ewe_v = df.get("Ewe/V")
+                    ece_v = df.get("Ece/V")
                     if ewe_v is not None and ece_v is not None:
-                        result_df["voltage_v"] = ewe_v - ece_v
+                        result_df["voltage/V"] = ewe_v - ece_v
                     elif ewe_v is not None:
-                        result_df["voltage_v"] = ewe_v
+                        result_df["voltage/V"] = ewe_v
                     elif ece_v is not None:
-                        result_df["voltage_v"] = -ece_v
+                        result_df["voltage/V"] = -ece_v
                     else:
-                        result_df["voltage_v"] = 0
+                        result_df["voltage/V"] = 0
                 elif input_col and input_col in df.columns:
                     result_df[output_col] = df[input_col]
                 else:
@@ -873,140 +812,3 @@ class BiologicDataReader(HasTraits):
             return result_df if not result_df.empty else pd.DataFrame()
 
         return df
-
-    @staticmethod
-    def _save_data(data: dict[str, Any] | list[Any] | pd.DataFrame, output_path: Path, data_type: str, cleaned: bool = False) -> None:
-        """Save metadata as JSON or data as CSV."""
-        try:
-            if cleaned:
-                output_path = output_path.with_stem(output_path.stem + "_cleaned")
-            if data_type == "metadata":
-                with open(output_path, "w", encoding="utf-8") as f:
-                    json.dump(data, f, indent=2, ensure_ascii=False)
-            else:
-                if isinstance(data, pd.DataFrame):
-                    df = data
-                elif isinstance(data, dict):
-                    data_copy = {k: v for k, v in data.items() if k != "_metadata"}
-                    if not data_copy:
-                        return
-                    df = pd.DataFrame(data_copy)
-                else:
-                    return
-                df.to_csv(output_path.with_suffix(".csv"), index=False, encoding="utf-8-sig")
-        except IOError as e:
-            logger.error("Failed to save %s to %s: %s", data_type, output_path, e)
-
-    @staticmethod
-    def _read_all_biologic(folder_path: Path | str | None = None) -> dict[str, tuple[dict[str, Any], dict[str, Any]]]:
-        """Read all BioLogic MPT files from folder."""
-        if folder_path is None:
-            return {}
-
-        folder_path = Path(folder_path) if isinstance(folder_path, str) else folder_path
-        reader = BiologicDataReader()
-        all_data = {}
-
-        for bio_file in folder_path.glob("*.mpt"):
-            try:
-                reader.filepath = bio_file
-                metadata, data = reader._read_biologic_file()
-                all_data[bio_file.name] = (metadata, data)
-            except Exception:
-                logger.exception("Error processing %s", bio_file.name)
-
-        return all_data
-
-    @staticmethod
-    def _ensure_path(path: Path | str) -> Path:
-        """Convert string to Path if necessary."""
-        return Path(path) if isinstance(path, str) else path
-
-    @staticmethod
-    def load(filepath: Path | str) -> tuple[dict[str, Any], dict[str, Any]] | dict[str, tuple[dict[str, Any], dict[str, Any]]]:
-        """Load BioLogic file or folder and return data."""
-        filepath = BiologicDataReader._ensure_path(filepath)
-        if filepath.is_dir():
-            result = BiologicDataReader._read_all_biologic(filepath)
-            # Add echem technique metadata to all results
-            for key in result:
-                metadata, data = result[key]
-                metadata["technique"] = "echem"
-                result[key] = (metadata, data)
-            return result
-        if filepath.is_file():
-            reader = BiologicDataReader(filepath)
-            metadata, data = reader._read_biologic_file()
-            # Add echem technique metadata
-            metadata["technique"] = "echem"
-            return metadata, data
-        raise FileNotFoundError(f"Path not found: {filepath}")
-
-    @staticmethod
-    def _process_and_save(metadata: dict[str, Any], data: dict[str, Any], metadata_file: Path, data_file: Path, save_original: bool = False, save_cleaned: bool = True) -> None:
-        """Process and save metadata and data files."""
-        if save_original:
-            BiologicDataReader._save_data(metadata, metadata_file, "metadata", cleaned=False)
-            BiologicDataReader._save_data(data, data_file, "data", cleaned=False)
-
-        if save_cleaned:
-            cleaned_metadata = BiologicDataReader._clean_metadata(metadata)
-            cleaned_data = BiologicDataReader._clean_data(data, metadata)
-            BiologicDataReader._save_data(cleaned_metadata, metadata_file, "metadata", cleaned=True)
-            BiologicDataReader._save_data(cleaned_data, data_file, "data", cleaned=True)
-
-    @staticmethod
-    def save(input_filepath: Path | str, output_dir: Path | str, save_cleaned: bool = True, save_original: bool = False) -> None:
-        """Load from input and save metadata (JSON) and data (CSV).
-
-        Parameters
-        ----------
-        input_filepath : Path or str
-            Input BioLogic file or folder path
-        output_dir : Path or str
-            Output directory
-        save_cleaned : bool
-            If True, save cleaned versions (default: True)
-        save_original : bool
-            If True, also save original (non-cleaned) versions (default: False)
-        """
-        input_filepath = BiologicDataReader._ensure_path(input_filepath)
-        output_dir = BiologicDataReader._ensure_path(output_dir)
-        output_dir.mkdir(parents=True, exist_ok=True)
-
-        result = BiologicDataReader.load(input_filepath)
-
-        if input_filepath.is_file():
-            if isinstance(result, tuple):
-                metadata, data = result
-                base_name = input_filepath.stem
-                metadata_file = output_dir / f"{base_name}_metadata.json"
-                data_file = output_dir / f"{base_name}_data.json"
-                BiologicDataReader._process_and_save(metadata, data, metadata_file, data_file, save_original, save_cleaned)
-        elif isinstance(result, dict):
-            for filename, (metadata, data) in result.items():
-                file_path = Path(filename)
-                base_name = f"{file_path.stem}_{file_path.suffix.lstrip('.')}"
-                metadata_file = output_dir / f"{base_name}_metadata.json"
-                data_file = output_dir / f"{base_name}_data.json"
-                BiologicDataReader._process_and_save(metadata, data, metadata_file, data_file, save_original, save_cleaned)
-
-
-if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
-
-    parser = argparse.ArgumentParser(description="BiologicMPTReader for BioLogic files", prog="BiologicMPTReader.py")
-    parser.add_argument("path", type=str, help="Path to BioLogic file or folder")
-    parser.add_argument("-o", "--output", type=str, default="output", help="Output directory (default: output)")
-    parser.add_argument("--no-clean", action="store_true", help="Also save original (non-cleaned) data in addition to cleaned data")
-
-    args = parser.parse_args()
-    path = Path(args.path)
-
-    if not path.exists():
-        logger.error("Path not found: %s", path)
-        sys.exit(1)
-
-    # save_cleaned=True, save_original=args.no_clean
-    # When --no-clean is passed, save_original=True to also save original data
-    BiologicDataReader.save(path, args.output, save_cleaned=True, save_original=args.no_clean)

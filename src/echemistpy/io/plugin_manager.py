@@ -6,10 +6,7 @@ without external dependencies like pluggy.
 
 from __future__ import annotations
 
-from pathlib import Path
-from typing import Any, Dict, Optional, Type
-
-from echemistpy.io.structures import RawData, RawDataInfo
+from typing import Any, Dict, Optional
 
 
 class IOPluginManager:
@@ -58,67 +55,13 @@ class IOPluginManager:
         """List all supported file extensions."""
         return list(self._loaders.keys())
 
-
-# Global instance
-_instance = None
-
-
-def get_plugin_manager() -> IOPluginManager:
-    """Get or create the global plugin manager instance."""
-    global _instance
-    if _instance is None:
-        _instance = IOPluginManager()
-    return _instance
-        extension = (fmt or filepath.suffix.lstrip(".")).lower()
-
-        if extension not in self._loaders:
-            raise ValueError(
-                f"No loader found for extension '{extension}'. "
-                f"Supported formats: {', '.join(sorted(self._loaders.keys()))}"
-            )
-
-        loader = self._loaders[extension]
-        return loader.load_file(filepath, **kwargs)
-
-    def save_data(
-        self,
-        data: xr.Dataset,
-        metadata: dict[str, Any],
-        filepath: str | Path,
-        fmt: Optional[str] = None,
-        **kwargs: Any,
-    ) -> None:
-        """Save data using the appropriate plugin.
-
-        Args:
-            data: xarray.Dataset to save
-            metadata: Metadata dictionary
-            filepath: Destination path
-            fmt: Optional format override
-            **kwargs: Additional arguments passed to the saver plugin
-
-        Raises:
-            ValueError: If no saver is found for the format
-        """
-        filepath = Path(filepath)
-        extension = (fmt or filepath.suffix.lstrip(".")).lower()
-
-        if extension not in self._savers:
-            raise ValueError(
-                f"No saver found for format '{extension}'. "
-                f"Supported formats: {', '.join(sorted(self._savers.keys()))}"
-            )
-
-        saver = self._savers[extension]
-        saver.save_data(data, metadata, filepath, fmt=fmt, **kwargs)
-
     def get_supported_loaders(self) -> dict[str, str]:
         """Get dictionary of supported loader extensions.
 
         Returns:
             Dictionary mapping extensions to loader names
         """
-        return {ext: type(loader).__name__ for ext, loader in self._loaders.items()}
+        return {ext: loader.__name__ if hasattr(loader, "__name__") else str(loader) for ext, loader in self._loaders.items()}
 
     def get_supported_savers(self) -> dict[str, str]:
         """Get dictionary of supported saver formats.
@@ -126,7 +69,7 @@ def get_plugin_manager() -> IOPluginManager:
         Returns:
             Dictionary mapping formats to saver names
         """
-        return {fmt: type(saver).__name__ for fmt, saver in self._savers.items()}
+        return {fmt: saver.__name__ if hasattr(saver, "__name__") else str(saver) for fmt, saver in self._savers.items()}
 
 
 # Global plugin manager instance

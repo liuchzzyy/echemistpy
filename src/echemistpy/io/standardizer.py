@@ -59,6 +59,7 @@ class DataStandardizer:
             "Vbatt": "Voltage/V",
             "cell_voltage": "Voltage/V",
             "Cell_Voltage": "Voltage/V",
+            "voltage/V": "Voltage/V",
             # Current variants
             "current": "Current/mA",
             "Current": "Current/mA",
@@ -67,6 +68,7 @@ class DataStandardizer:
             "current_mA": "Current/mA",
             "I_mA": "Current/mA",
             "<I>/mA": "Current/mA",
+            "I/mA": "Current/mA",
             "control/V/mA": "Current/mA",
             # Charge/Capacity variants
             "charge": "Q/mA.h",
@@ -80,6 +82,12 @@ class DataStandardizer:
             "Power": "P/W",
             "P": "P/W",
             "P/W": "P/W",
+            # EIS variants
+            "freq/Hz": "freq/Hz",
+            "Re(Z)/Ohm": "rez_ohm",
+            "-Im(Z)/Ohm": "imz_ohm",
+            "|Z|/Ohm": "z_ohm",
+            "Phase(Z)/deg": "phasez_deg",
         },
         "xrd": {
             "2theta": "2theta/deg",
@@ -236,7 +244,7 @@ class DataStandardizer:
 def detect_technique(dataset: xr.Dataset) -> str:
     """Auto-detect measurement technique based on column names and data patterns."""
     columns = list(dataset.data_vars.keys())
-    columns_lower = [col.lower() for col in columns]
+    columns_lower = [str(col).lower() for col in columns]
 
     # Check for electrochemistry patterns
     has_time = any("time" in col for col in columns_lower)
