@@ -95,8 +95,6 @@ print(raw_data.data)
 print(raw_info.to_dict())
 ```
 
-For a comprehensive demonstration, see the [IO Tutorial Notebook](docs/Characterization/IO_Tutorial.ipynb).
-
 ---
 
 ## Project Structure
