@@ -281,25 +281,46 @@ class LanheXLSXReader(HasTraits):
 
     @staticmethod
     def _clean_data(data: dict[str, Any], active_material_mass: Any = None) -> dict[str, Any]:
-        """Return data with original headers, filtering for requested columns."""
-        keep_cols = {"Record", "SysTime", "Cycle", "TestTime", "Voltage/V", "Current/uA", "Capacity/uAh", "SpeCap/mAh/g", "dQdV/uAh/V", "dVdQ/V/uAh"}
+        """Return data with original headers, filtering for requested columns and ordering them."""
+        # 定义固定的列名顺序
+        ordered_cols = [
+            "Record",
+            "SysTime",
+            "Cycle",
+            "TestTime",
+            "Voltage/V",
+            "Current/uA",
+            "Capacity/uAh",
+            "SpeCap/mAh/g",
+            "SpeCap_cal/mAh/g",
+            "dQdV/uAh/V",
+            "dVdQ/V/uAh",
+        ]
 
-        cleaned_data = {k: v for k, v in data.items() if k in keep_cols}
-
-        # Calculate SpeCap_cal/mAh/g if mass is available
+        # 1. 预计算 SpeCap_cal/mAh/g (如果提供了质量)
+        spe_cap_cal = None
         if active_material_mass and "Capacity/uAh" in data:
             try:
                 mass_str = str(active_material_mass).lower()
-                # Extract numeric value
+                # 提取数值
                 mass_val = float("".join(c for c in mass_str if c.isdigit() or c == "."))
-                # Determine unit factor
+                # 确定单位系数
                 factor = 0.001 if "mg" in mass_str else 1.0
                 mass_g = mass_val * factor
 
                 if mass_g > 0:
                     # SpeCap (mAh/g) = (Capacity (uAh) / 1000) / mass (g)
-                    cleaned_data["SpeCap_cal/mAh/g"] = [(float(c) / 1000.0) / mass_g if c is not None else None for c in data["Capacity/uAh"]]
+                    spe_cap_cal = [(float(c) / 1000.0) / mass_g if c is not None else None for c in data["Capacity/uAh"]]
             except (ValueError, TypeError, ZeroDivisionError):
                 logger.debug("Failed to calculate SpeCap_cal/mAh/g with mass: %s", active_material_mass)
+
+        # 2. 按照固定顺序构建结果字典
+        cleaned_data = {}
+        for col in ordered_cols:
+            if col == "SpeCap_cal/mAh/g":
+                if spe_cap_cal is not None:
+                    cleaned_data[col] = spe_cap_cal
+            elif col in data:
+                cleaned_data[col] = data[col]
 
         return cleaned_data

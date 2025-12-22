@@ -741,22 +741,38 @@ class BiologicMPTReader(HasTraits):
         if not is_peis and "freq/Hz" in names:
             is_peis = True
 
-        # Define columns to keep based on technique
+        # 定义不同技术的固定列名顺序
         if is_peis:
-            cols_to_keep = ["cycle number", "freq/Hz", "Re(Z)/Ohm", "-Im(Z)/Ohm", "|Z|/Ohm", "Phase(Z)/deg"]
+            ordered_cols = ["cycle number", "freq/Hz", "Re(Z)/Ohm", "-Im(Z)/Ohm", "|Z|/Ohm", "Phase(Z)/deg"]
         elif is_gpcl:
-            cols_to_keep = ["time/s", "cycle number", "Ewe/V", "Ece/V", "I/mA", "Capacity/mA.h"]
+            ordered_cols = [
+                "time/s",
+                "systime",
+                "cycle number",
+                "Ewe/V",
+                "Ece/V",
+                "voltage/V",
+                "I/mA",
+                "Capacity/mA.h",
+                "SpeCap_cal/mAh/g",
+            ]
         else:
-            cols_to_keep = list(names)
+            ordered_cols = list(names)
 
-        # Filter and build data_vars (keep original names)
-        data_vars = {col: (["record"], mpt_array[col]) for col in cols_to_keep if col in names}
+        # 1. 提取原始列
+        data_vars = {col: (["record"], mpt_array[col]) for col in ordered_cols if col in names}
 
-        # Add calculated columns
+        # 2. 添加计算列
         if is_gpcl:
             BiologicMPTReader._add_gpcl_columns(data_vars, mpt_array, names, metadata, active_material_mass)
 
-        return xr.Dataset(data_vars, coords={"record": np.arange(1, n_records + 1)})
+        # 3. 按照固定顺序重新构建 (仅保留存在的列)
+        final_vars = {}
+        for col in ordered_cols:
+            if col in data_vars:
+                final_vars[col] = data_vars[col]
+
+        return xr.Dataset(final_vars, coords={"record": np.arange(1, n_records + 1)})
 
     @staticmethod
     def _add_gpcl_columns(data_vars: dict, mpt_array: np.ndarray, names: list[str], metadata: dict | None, mass: Any):
