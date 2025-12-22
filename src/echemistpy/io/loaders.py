@@ -80,38 +80,24 @@ def load(
     raw_data, raw_info = reader.load()
 
     # Apply manual overrides if provided
-    if sample_name:
-        raw_info.sample_name = sample_name
-    if start_time:
-        raw_info.start_time = start_time
-    if instrument:
-        raw_info.instrument = instrument
-    if operator:
-        raw_info.operator = operator
-    if active_material_mass:
-        raw_info.active_material_mass = active_material_mass
+    overrides = {
+        "sample_name": sample_name,
+        "start_time": start_time,
+        "instrument": instrument,
+        "operator": operator,
+        "active_material_mass": active_material_mass,
+    }
     if technique:
-        raw_info.technique = [technique] if isinstance(technique, str) else technique
+        overrides["technique"] = [technique] if isinstance(technique, str) else technique
+
+    # Filter out None values
+    raw_info.update({k: v for k, v in overrides.items() if v is not None})
 
     if not standardize:
         return raw_data, raw_info
 
     # Auto-standardize
     standardized_data, standardized_info = standardize_names(raw_data, raw_info, technique_hint=technique)
-
-    # Ensure manual overrides persist after standardization if they were provided
-    if sample_name:
-        standardized_info.sample_name = sample_name
-    if start_time:
-        standardized_info.start_time = start_time
-    if instrument:
-        standardized_info.instrument = instrument
-    if operator:
-        standardized_info.operator = operator
-    if active_material_mass:
-        standardized_info.active_material_mass = active_material_mass
-    if technique:
-        standardized_info.technique = [technique] if isinstance(technique, str) else technique
 
     return standardized_data, standardized_info
 

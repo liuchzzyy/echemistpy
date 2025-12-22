@@ -8,7 +8,7 @@ and techniques.
 from __future__ import annotations
 
 import warnings
-from typing import Any, ClassVar, Dict, List, Optional, Tuple
+from typing import ClassVar, Dict, Optional, Tuple
 
 import numpy as np
 import xarray as xr
@@ -25,11 +25,19 @@ class DataStandardizer(HasTraits):
 
     dataset = Instance(xr.Dataset, help="The dataset to standardize")
     techniques = List(Unicode(), help="List of technique identifiers (e.g., ['echem', 'peis'])")
+    instrument = Unicode(None, allow_none=True, help="The instrument identifier")
 
     # Standard column name mappings for different techniques
     STANDARD_MAPPINGS: ClassVar[dict[str, dict[str, str]]] = {
-        "electrochemistry": {
-            # Time variants
+        "echem": {
+            # Absolute Time (No units)
+            "Systime": "Systime",
+            "SysTime": "Systime",
+            "systime": "Systime",
+            "abs_time": "Systime",
+            "Absolute Time": "Systime",
+            "DateTime": "Systime",
+            # Relative Time (Standardized to Time/s)
             "time": "Time/s",
             "Time": "Time/s",
             "TIME": "Time/s",
@@ -38,6 +46,7 @@ class DataStandardizer(HasTraits):
             "time_s": "Time/s",
             "Time_s": "Time/s",
             "test_time": "Time/s",
+            "TestTime": "Time/s",
             # Cycle variants
             "Ns": "Cycle_number",
             "ns": "Cycle_number",
@@ -47,14 +56,15 @@ class DataStandardizer(HasTraits):
             "cycle_number": "Cycle_number",
             "step": "Step_number",
             "step_number": "Step_number",
-            "record": "Record_number",
-            "record_number": "Record_number",
+            "record": "Record",
+            "record_number": "Record",
             # Potential/Voltage variants (working electrode)
             "potential": "Ewe/V",
             "Potential": "Ewe/V",
             "E": "Ewe/V",
             "Ewe": "Ewe/V",
             "Ewe/V": "Ewe/V",
+            "Ece/V": "Ece/V",
             "potential_V": "Ewe/V",
             "voltage_v": "Ewe/V",
             # Battery voltage variants (cell voltage)
@@ -69,6 +79,7 @@ class DataStandardizer(HasTraits):
             "cell_voltage": "Voltage/V",
             "Cell_Voltage": "Voltage/V",
             "voltage/V": "Voltage/V",
+            "Voltage/V": "Voltage/V",
             # Current variants
             "current": "Current/mA",
             "Current": "Current/mA",
@@ -94,17 +105,23 @@ class DataStandardizer(HasTraits):
             "capacity_mah": "Capacity/mAh",
             "capacity/uAh": "Capacity/uAh",
             "capacity/mAh": "Capacity/mAh",
-            # Power variants
-            "power": "P/W",
-            "Power": "P/W",
-            "P": "P/W",
-            "P/W": "P/W",
+            "SpeCap/mAh/g": "Specific_Capacity/mAh/g",
+            "SpeCap_cal/mAh/g": "Specific_Capacity_cal/mAh/g",
             # EIS variants
-            "freq/Hz": "freq/Hz",
-            "Re(Z)/Ohm": "rez_ohm",
-            "-Im(Z)/Ohm": "imz_ohm",
-            "|Z|/Ohm": "z_ohm",
-            "Phase(Z)/deg": "phasez_deg",
+            "freq/Hz": "Frequency/Hz",
+            "frequency": "Frequency/Hz",
+            "Frequency": "Frequency/Hz",
+            "Re(Z)/Ohm": "Re(Z)/Ohm",
+            "Z'": "Re(Z)/Ohm",
+            "Z_real": "Re(Z)/Ohm",
+            "-Im(Z)/Ohm": "-Im(Z)/Ohm",
+            "Z''": "-Im(Z)/Ohm",
+            "Z_imag": "-Im(Z)/Ohm",
+            "|Z|/Ohm": "|Z|/Ohm",
+            "Z_mag": "|Z|/Ohm",
+            "Phase(Z)/deg": "Phase/deg",
+            "phase": "Phase/deg",
+            "Phase": "Phase/deg",
         },
         "xrd": {
             "2theta": "2theta/deg",
@@ -137,39 +154,53 @@ class DataStandardizer(HasTraits):
         },
     }
 
-    # Standard metadata key mappings
-    METADATA_MAPPINGS: ClassVar[dict[str, str]] = {
-        "Acquisition started on": "start_time",
-        "Acquisition ended on": "end_time",
-        "Instrument": "instrument",
-        "Operator": "operator",
-        "Sample": "sample_name",
-        "test_name": "sample_name",
-        "Technique": "technique",
-        "File": "filename",
-        "Comments": "remarks",
-        "Mass of active material": "active_material_mass",
-        "Characteristic mass": "active_material_mass",
-    }
-
-    def __init__(self, dataset: xr.Dataset, techniques: list[str] | str = "unknown", **kwargs):
-        """Initialize with a dataset and technique(s)."""
+    def __init__(
+        self,
+        dataset: xr.Dataset,
+        techniques: list[str] | str = "unknown",
+        instrument: Optional[str] = None,
+        **kwargs,
+    ):
+        """Initialize with a dataset, technique(s), and instrument."""
         if isinstance(techniques, str):
             techniques = [techniques]
-        super().__init__(dataset=dataset.copy(deep=True), techniques=[t.lower() for t in techniques], **kwargs)
+        super().__init__(
+            dataset=dataset.copy(deep=True),
+            techniques=[t.lower() for t in techniques],
+            instrument=instrument,
+            **kwargs,
+        )
+
+    def standardize(self, custom_mapping: Optional[Dict[str, str]] = None) -> "DataStandardizer":
+        """Perform full standardization (names and units).
+
+        Args:
+            custom_mapping: Optional additional column name mappings
+
+        Returns:
+            Self for chaining
+        """
+        return self.standardize_column_names(custom_mapping).standardize_units()
 
     def standardize_column_names(self, custom_mapping: Optional[Dict[str, str]] = None) -> "DataStandardizer":
-        """Standardize column names based on techniques and custom mappings."""
+        """Standardize column names based on techniques, instrument, and custom mappings."""
         # Build aggregate mapping from all techniques
         mapping = {}
         for tech in self.techniques:
             # Map specific techniques to general categories if needed
             tech_category = tech
             if tech in {"cv", "gcd", "eis", "ca", "cp", "lsjv", "echem", "ec", "peis", "gpcl"}:
-                tech_category = "electrochemistry"
+                tech_category = "echem"
 
+            # 1. Apply general technique mapping
             if tech_category in self.STANDARD_MAPPINGS:
                 mapping.update(self.STANDARD_MAPPINGS[tech_category])
+
+            # 2. Apply instrument-specific mapping (overwrites general)
+            if self.instrument:
+                inst_key = f"{self.instrument.lower()}_{tech_category}"
+                if inst_key in self.STANDARD_MAPPINGS:
+                    mapping.update(self.STANDARD_MAPPINGS[inst_key])
 
         # Add custom mappings if provided
         if custom_mapping:
@@ -185,14 +216,6 @@ class DataStandardizer(HasTraits):
             self.dataset = self.dataset.rename(rename_dict)
 
         return self
-
-    def standardize_metadata(self, metadata: dict[str, Any]) -> dict[str, Any]:
-        """Standardize metadata keys based on standard mappings."""
-        standardized = {}
-        for key, value in metadata.items():
-            new_key = self.METADATA_MAPPINGS.get(key, key)
-            standardized[new_key] = value
-        return standardized
 
     def standardize_units(self) -> "DataStandardizer":
         """Convert units to standard echemistpy conventions."""
@@ -233,12 +256,11 @@ class DataStandardizer(HasTraits):
                 self.dataset = self.dataset.rename({var_name: new_name})
 
             # Handle capacity conversions
-            elif "capacity" in var_name.lower() or var_name.startswith("Q"):
-                if "/uAh" in var_name:
-                    # Convert uAh to mAh
-                    self.dataset[var_name] = var_data / 1000
-                    new_name = var_name.replace("/uAh", "/mAh")
-                    self.dataset = self.dataset.rename({var_name: new_name})
+            elif ("capacity" in var_name.lower() or var_name.startswith("Q")) and "/uAh" in var_name:
+                # Convert uAh to mAh
+                self.dataset[var_name] = var_data / 1000
+                new_name = var_name.replace("/uAh", "/mAh")
+                self.dataset = self.dataset.rename({var_name: new_name})
 
         return self
 
@@ -266,80 +288,9 @@ class DataStandardizer(HasTraits):
 
         return self
 
-    def validate_data_format(self) -> Dict[str, Any]:
-        """Validate that data follows echemistpy format conventions."""
-        issues = {"warnings": [], "errors": []}
-
-        # Check record/row dimension
-        if "record" not in self.dataset.coords and "row" not in self.dataset.coords:
-            issues["errors"].append("Missing 'record' or 'row' coordinate dimension")
-
-        # Check for technique-specific required columns
-        technique_requirements = {
-            "cv": ["Time/s", "Ewe/V", "Current/mA"],
-            "gcd": ["Time/s", "Ewe/V", "Current/mA"],
-            "eis": ["freq/Hz", "rez_ohm", "imz_ohm"],
-            "peis": ["freq/Hz", "rez_ohm", "imz_ohm"],
-            "xrd": ["2theta/deg", "intensity/counts"],
-            "xps": ["BE/eV", "intensity/cps"],
-            "tga": ["T/°C", "weight/%"],
-        }
-
-        for tech in self.techniques:
-            if tech in technique_requirements:
-                required = technique_requirements[tech]
-                missing = [col for col in required if col not in self.dataset.data_vars]
-                if missing:
-                    issues["warnings"].append(f"Missing recommended columns for {tech}: {missing}")
-
-        return issues
-
     def get_dataset(self) -> xr.Dataset:
         """Return the standardized dataset."""
         return self.dataset
-
-
-def detect_technique(dataset: xr.Dataset) -> list[str]:
-    """Auto-detect technique based on column names and data patterns."""
-    columns = list(dataset.data_vars.keys())
-    columns_lower = [str(col).lower() for col in columns]
-    techniques = []
-
-    # Check for electrochemistry patterns
-    has_time = any("time" in col for col in columns_lower)
-    has_potential = any(any(pot in col for pot in ["potential", "voltage", "ewe", " e ", " v "]) for col in columns_lower)
-    has_current = any(any(curr in col for curr in ["current", " i ", "ma", "amp"]) for col in columns_lower)
-
-    if has_time and has_potential and has_current:
-        techniques.append("electrochemistry")
-
-    # Check for EIS patterns
-    has_frequency = any("freq" in col for col in columns_lower)
-    has_impedance = any(any(imp in col for imp in ["z", "impedance", "re_z", "im_z"]) for col in columns_lower)
-    if has_frequency and has_impedance:
-        techniques.append("eis")
-
-    # Check for XRD patterns
-    has_angle = any(any(ang in col for ang in ["2theta", "angle", "theta"]) for col in columns_lower)
-    has_intensity = any("intensity" in col or "counts" in col for col in columns_lower)
-    if has_angle and has_intensity:
-        techniques.append("xrd")
-
-    # Check for XPS patterns
-    has_be = any("be" in col or "binding" in col or "energy" in col for col in columns_lower)
-    if has_be and has_intensity:
-        techniques.append("xps")
-
-    # Check for TGA patterns
-    has_temp = any("temp" in col or " t " in col for col in columns_lower)
-    has_weight = any("weight" in col or "mass" in col for col in columns_lower)
-    if has_temp and has_weight:
-        techniques.append("tga")
-
-    # Default fallback
-    if not techniques:
-        return ["unknown"]
-    return techniques
 
 
 def standardize_names(
@@ -368,42 +319,22 @@ def standardize_names(
         raise ValueError("RawData must contain an xarray.Dataset for standardization")
 
     # Determine techniques
-    techniques = technique_hint or raw_data_info.get("technique") or detect_technique(dataset)
+    techniques = technique_hint or raw_data_info.get("technique") or ["unknown"]
     if isinstance(techniques, str):
-        techniques = detect_technique(dataset) if techniques in {"Unknown", "unknown", "Table"} else [techniques]
+        techniques = [techniques]
 
     # Standardize data
-    standardizer = DataStandardizer(dataset, techniques)
-    standardizer.standardize_column_names(custom_mapping)
-    standardizer.standardize_units()
+    standardizer = DataStandardizer(dataset, techniques, instrument=raw_data_info.instrument)
+    standardizer.standardize(custom_mapping)
 
     if required_columns:
         standardizer.ensure_required_columns(required_columns)
 
-    # Validate
-    issues = standardizer.validate_data_format()
-    if issues["warnings"]:
-        for warning in issues["warnings"]:
-            warnings.warn(warning, stacklevel=2)
-
     standardized_dataset = standardizer.get_dataset()
 
-    # Standardize metadata
-    raw_meta = raw_data_info.others
-    standardized_meta = standardizer.standardize_metadata(raw_meta)
-
-    # Create RawDataInfo with standardized fields
-    info = RawDataInfo(
-        technique=techniques,
-        sample_name=standardized_meta.get("sample_name", "Unknown"),
-        instrument=standardized_meta.get("instrument"),
-        operator=standardized_meta.get("operator"),
-        start_time=standardized_meta.get("start_time"),
-        active_material_mass=standardized_meta.get("active_material_mass"),
-        others=standardized_meta,
-    )
-
-    # Create RawData
+    # Create standardized info and data
+    info = raw_data_info.copy()
+    info.technique = techniques
     standardized_data = RawData(data=standardized_dataset)
 
     return standardized_data, info
@@ -411,6 +342,5 @@ def standardize_names(
 
 __all__ = [
     "DataStandardizer",
-    "detect_technique",
     "standardize_names",
 ]

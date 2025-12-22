@@ -8,94 +8,155 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Optional, Sequence, Union
 
+import pandas as pd
 import xarray as xr
 
 from echemistpy.io.structures import (
+    BaseData,
+    BaseInfo,
     RawData,
+    RawDataInfo,
     ResultsData,
+    ResultsDataInfo,
 )
 
 
-def save_dataset(
-    dataset: xr.Dataset,
+def _to_list(obj: Any) -> list[Any]:
+    """Convert object to list if it's not already a sequence."""
+    if isinstance(obj, (list, tuple)):
+        return list(obj)
+    return [obj]
+
+
+def _sanitize_dataset(ds: xr.Dataset) -> xr.Dataset:
+    """Sanitize dataset variable and coordinate names for NetCDF saving.
+    Replaces '/' with '_' as NetCDF/HDF5 doesn't allow '/' in names.
+    """
+    rename_dict = {str(name): str(name).replace("/", "_") for name in list(ds.data_vars) + list(ds.coords) if "/" in str(name)}
+    if rename_dict:
+        return ds.rename(rename_dict)
+    return ds
+
+
+def save_info(
+    info: Union[BaseInfo, Sequence[BaseInfo]],
+    path: str | Path,
+) -> None:
+    """Save one or more Info objects to a .dat file.
+
+    Args:
+        info: Single or sequence of Info objects (RawDataInfo, ResultsDataInfo).
+        path: Destination path (should end in .dat).
+    """
+    path = Path(path)
+    info_list = _to_list(info)
+
+    # Convert to dicts
+    data_to_save = [i.to_dict() for i in info_list]
+
+    # If only one, save as dict, otherwise as list of dicts
+    output = data_to_save[0] if len(data_to_save) == 1 else data_to_save
+
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(output, f, indent=4, ensure_ascii=False)
+
+
+def save_data(
+    data: Union[BaseData, Sequence[BaseData]],
     path: str | Path,
     fmt: Optional[str] = None,
     **kwargs: Any,
 ) -> None:
-    """Save an xarray.Dataset to disk.
+    """Save one or more Data objects to .nc or .csv.
 
     Args:
-        dataset: The xarray.Dataset to save
-        path: Destination path
-        fmt: Optional format override ('csv', 'nc', 'h5', 'json')
-        **kwargs: Additional arguments for the specific saver
+        data: Single or sequence of Data objects (RawData, ResultsData).
+        path: Destination path.
+        fmt: Optional format override ('nc', 'csv').
+        **kwargs: Additional arguments for xarray.to_netcdf or pandas.to_csv.
     """
     path = Path(path)
     ext = fmt.lower() if fmt else path.suffix.lower().lstrip(".")
+    data_list = _to_list(data)
+    datasets = [d.data for d in data_list]
 
-    if ext in {"csv", "txt", "tsv"}:
-        # Convert to pandas and save
-        sep = "\t" if ext == "tsv" else ","
-        df = dataset.to_dataframe()
-        # If it's a simple 1D dataset with 'record' or 'row' dimension, we might want to reset index
-        if "record" in df.index.names:
-            df = df.reset_index(drop=True)
-        elif "row" in df.index.names:
-            df = df.reset_index(drop=True)
-        df.to_csv(path, sep=sep, index=False, **kwargs)
+    if ext in {"nc", "netcdf"}:
+        kwargs.setdefault("engine", "h5netcdf")
+        sanitized_datasets = [_sanitize_dataset(ds) for ds in datasets]
+        if len(sanitized_datasets) == 1:
+            sanitized_datasets[0].to_netcdf(path, **kwargs)
+        else:
+            # Merge datasets if possible
+            combined = xr.merge(sanitized_datasets)
+            combined.to_netcdf(path, **kwargs)
 
-    elif ext in {"nc", "netcdf", "h5", "hdf5"}:
-        # Save as NetCDF (standard for xarray)
-        dataset.to_netcdf(path, **kwargs)
+    elif ext == "csv":
+        dfs = []
+        for ds in datasets:
+            df = ds.to_dataframe()
+            # Reset index if it's a standard record/row dimension
+            if "record" in df.index.names or "row" in df.index.names:
+                df = df.reset_index(drop=True)
+            dfs.append(df)
 
-    elif ext == "json":
-        # Save as JSON (useful for metadata or small datasets)
-        data_dict = dataset.to_dict()
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(data_dict, f, indent=4, ensure_ascii=False)
+        final_df = dfs[0] if len(dfs) == 1 else pd.concat(dfs, ignore_index=True)
 
+        final_df.to_csv(path, index=False, **kwargs)
     else:
-        raise ValueError(f"Unsupported save format: {ext}")
+        raise ValueError(f"Unsupported format: {ext}. Use 'nc' or 'csv'.")
 
 
-def save_raw_data(
-    raw_data: RawData,
+def save_combined(
+    data: Union[RawData, ResultsData, Sequence[Union[RawData, ResultsData]]],
+    info: Union[RawDataInfo, ResultsDataInfo, Sequence[Union[RawDataInfo, ResultsDataInfo]]],
     path: str | Path,
-    fmt: Optional[str] = None,
     **kwargs: Any,
 ) -> None:
-    """Save a RawData object to disk.
+    """Save combined data and info to a .nc file.
 
     Args:
-        raw_data: The RawData object to save
-        path: Destination path
-        fmt: Optional format override
+        data: Single or sequence of RawData or ResultsData objects.
+        info: Single or sequence of RawDataInfo or ResultsDataInfo objects.
+        path: Destination path.
+        **kwargs: Additional arguments for xarray.to_netcdf.
     """
-    # We save the underlying xarray dataset
-    # Metadata is typically stored in dataset.attrs or separately
-    save_dataset(raw_data.data, path, fmt=fmt, **kwargs)
+    path = Path(path)
+    data_list = _to_list(data)
+    info_list = _to_list(info)
 
+    if len(data_list) != len(info_list) and len(info_list) != 1:
+        raise ValueError("Number of data objects and info objects must match, or provide a single info object.")
 
-def save_results_data(
-    results_data: ResultsData,
-    path: str | Path,
-    fmt: Optional[str] = None,
-    **kwargs: Any,
-) -> None:
-    """Save a ResultsData object to disk.
+    combined_datasets = []
+    for i, d in enumerate(data_list):
+        ds = d.data.copy()
+        # Use the corresponding info or the only info provided
+        current_info = info_list[i] if i < len(info_list) else info_list[0]
+        # Update attributes with metadata, filtering out None values and converting complex types to JSON strings
+        info_dict = {}
+        for k, v in current_info.to_dict().items():
+            if v is None:
+                continue
+            if isinstance(v, (str, int, float, bool)) or (isinstance(v, (list, tuple)) and all(isinstance(x, (str, int, float, bool)) for x in v)):
+                info_dict[k] = v
+            else:
+                # Convert dicts and nested structures to JSON strings
+                info_dict[k] = json.dumps(v, ensure_ascii=False)
+        ds.attrs.update(info_dict)
+        combined_datasets.append(_sanitize_dataset(ds))
 
-    Args:
-        results_data: The ResultsData object to save
-        path: Destination path
-        fmt: Optional format override
-    """
-    save_dataset(results_data.data, path, fmt=fmt, **kwargs)
+    kwargs.setdefault("engine", "h5netcdf")
+    if len(combined_datasets) == 1:
+        combined_datasets[0].to_netcdf(path, **kwargs)
+    else:
+        combined = xr.merge(combined_datasets)
+        combined.to_netcdf(path, **kwargs)
 
 
 __all__ = [
-    "save_dataset",
-    "save_raw_data",
-    "save_results_data",
+    "save_combined",
+    "save_data",
+    "save_info",
 ]

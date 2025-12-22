@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """Bio-Logic MPT file reader with metadata extraction using traitlets.
 
 Main classes:
@@ -7,6 +7,7 @@ Main classes:
 
 Based on: https://github.com/echemdata/galvani/blob/master/galvani/BioLogic.py
 """
+# ruff: noqa: N999
 
 import logging
 import re
@@ -545,18 +546,7 @@ class BiologicMPTReader(HasTraits):
         mass = self.active_material_mass or test_info.get("Mass of active material") or cleaned_metadata.get("channel_process_info", {}).get("Characteristic mass")
 
         # Determine specific technique
-        tech_str = cleaned_metadata.get("file_info", {}).get("technique", "")
-        names = mpt_array.dtype.names or []
-        is_peis = "Electrochemical Impedance" in tech_str or "PEIS" in tech_str
-        is_gpcl = "Galvanostatic Cycling" in tech_str or "GPCL" in tech_str
-        if not is_peis and "freq/Hz" in names:
-            is_peis = True
-
-        tech_list = list(self.technique)
-        if is_peis:
-            tech_list.append("peis")
-        if is_gpcl:
-            tech_list.append("gpcl")
+        tech_list = self._detect_techniques(cleaned_metadata, mpt_array)
 
         # Clean data (returns xarray.Dataset)
         ds = self._clean_data(mpt_array, metadata=cleaned_metadata, active_material_mass=mass)
@@ -575,22 +565,56 @@ class BiologicMPTReader(HasTraits):
 
         return raw_data, raw_info
 
+    def _detect_techniques(self, cleaned_metadata: dict, mpt_array: np.ndarray) -> list[str]:
+        """Detect specific electrochemical techniques from metadata and data."""
+        tech_str = cleaned_metadata.get("file_info", {}).get("technique", "")
+        names = mpt_array.dtype.names or []
+        is_peis = "Electrochemical Impedance" in tech_str or "PEIS" in tech_str
+        is_gpcl = "Galvanostatic Cycling" in tech_str or "GPCL" in tech_str
+        if not is_peis and "freq/Hz" in names:
+            is_peis = True
+
+        tech_list = list(self.technique)
+        if is_peis:
+            tech_list.append("peis")
+        if is_gpcl:
+            tech_list.append("gpcl")
+        return tech_list
+
     @staticmethod
     def _parse_mpt_metadata(comments: list[bytes | str]) -> dict[str, Any]:
         """Parse MPT file comments into structured metadata."""
         meta: dict[str, Any] = {}
-        current_section: dict[str, Any] | None = None
-        in_parameters = False
-        work_mode_list: list[dict[str, Any]] = []
+        state = {"current_section": None, "in_parameters": False, "work_mode_list": []}
 
-        def split_kv(content: str) -> tuple[str, str] | None:
+        for line in comments:
+            text = line.decode("latin1") if isinstance(line, bytes) else line
+            text = text.rstrip("\r\n")
+            if not text.strip():
+                if state["in_parameters"]:
+                    state["in_parameters"] = False
+                continue
+
+            BiologicMPTReader._handle_mpt_line(text, meta, state)
+
+        if state["work_mode_list"]:
+            meta["work_mode"] = state["work_mode_list"]
+        return meta
+
+    @staticmethod
+    def _handle_mpt_line(text: str, meta: dict, state: dict):
+        """Handle a single line of MPT metadata."""
+        indent = len(text) - len(text.lstrip())
+        content = text.strip()
+
+        def split_kv(c: str) -> tuple[str, str] | None:
             for sep in (" : ", ":"):
-                if sep in content:
-                    k, v = content.split(sep, 1)
+                if sep in c:
+                    k, v = c.split(sep, 1)
                     return k.strip(), v.strip()
             return None
 
-        def add_val(d: dict[str, Any], key: str, val: Any) -> None:
+        def add_val(d: dict, key: str, val: Any) -> None:
             if key not in d:
                 d[key] = val
             else:
@@ -600,53 +624,33 @@ class BiologicMPTReader(HasTraits):
                 else:
                     d[key] = [existing, val]
 
-        for line in comments:
-            text = line.decode("latin1") if isinstance(line, bytes) else line
-            text = text.rstrip("\r\n")
-            if not text.strip():
-                if in_parameters:
-                    in_parameters = False
-                continue
-
-            indent = len(text) - len(text.lstrip())
-            content = text.strip()
-
-            if indent > 0 and current_section is not None:
-                kv = split_kv(content)
-                if kv:
-                    add_val(current_section, *kv)
+        if indent > 0 and state["current_section"] is not None:
+            kv = split_kv(content)
+            if kv:
+                add_val(state["current_section"], *kv)
+        elif "technique" not in meta and any(kw in content.lower() for kw in ["electrochemical", "impedance", "spectroscopy", "potentio", "galvano"]):
+            meta["technique"] = content
+        elif content.startswith("Cycle Definition"):
+            state["in_parameters"] = True
+            kv = split_kv(content)
+            state["current_section"] = {"cycle_definition": kv[1]} if kv else {}
+            state["work_mode_list"].append(state["current_section"])
+        elif state["in_parameters"] and state["current_section"] is not None:
+            match = re.match(r"(.+?)\s{2,}(.+)", text)
+            if match:
+                add_val(state["current_section"], match.group(1).strip(), match.group(2).strip())
             else:
-                if "technique" not in meta and any(kw in content.lower() for kw in ["electrochemical", "impedance", "spectroscopy", "potentio", "galvano"]):
-                    meta["technique"] = content
-                    continue
-
-                if content.startswith("Cycle Definition"):
-                    in_parameters = True
-                    kv = split_kv(content)
-                    current_section = {"cycle_definition": kv[1]} if kv else {}
-                    work_mode_list.append(current_section)
-                    continue
-
-                if in_parameters and current_section is not None:
-                    match = re.match(r"(.+?)\s{2,}(.+)", text)
-                    if match:
-                        add_val(current_section, match.group(1).strip(), match.group(2).strip())
-                    else:
-                        add_val(current_section, content, "")
+                add_val(state["current_section"], content, "")
+        else:
+            kv = split_kv(content)
+            if kv:
+                k, v = kv
+                if not v:
+                    state["current_section"] = {}
+                    meta[k] = state["current_section"]
                 else:
-                    kv = split_kv(content)
-                    if kv:
-                        k, v = kv
-                        if not v:
-                            current_section = {}
-                            meta[k] = current_section
-                        else:
-                            add_val(meta, k, v)
-                            current_section = None
-
-        if work_mode_list:
-            meta["work_mode"] = work_mode_list
-        return meta
+                    add_val(meta, k, v)
+                    state["current_section"] = None
 
     @staticmethod
     def _clean_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
@@ -728,34 +732,39 @@ class BiologicMPTReader(HasTraits):
 
         # Add calculated columns
         if is_gpcl:
-            # voltage/V
-            ewe, ece = (mpt_array[k] if k in names else None for k in ("Ewe/V", "Ece/V"))
-            if ewe is not None and ece is not None:
-                data_vars["voltage/V"] = (["record"], ewe - ece)
-            elif ewe is not None:
-                data_vars["voltage/V"] = (["record"], ewe)
-            elif ece is not None:
-                data_vars["voltage/V"] = (["record"], -ece)
-
-            # systime
-            try:
-                acq_start = metadata.get("file_info", {}).get("Acquisition started on", "") if metadata else ""
-                if acq_start and "time/s" in names:
-                    start_ts = datetime.strptime(acq_start, "%m/%d/%Y %H:%M:%S.%f").timestamp()
-                    systimes = [datetime.fromtimestamp(start_ts + t).strftime("%Y-%m-%dT%H:%M:%S") for t in mpt_array["time/s"]]
-                    data_vars["systime"] = (["record"], np.array(systimes))
-            except Exception as e:
-                logger.debug("Failed to calculate systime: %s", e)
-
-            # SpeCap_cal/mAh/g
-            if active_material_mass and "Capacity/mA.h" in names:
-                try:
-                    m_str = str(active_material_mass).lower()
-                    m_val = float("".join(c for c in m_str if c.isdigit() or c == "."))
-                    m_g = m_val * (0.001 if "mg" in m_str else 1.0)
-                    if m_g > 0:
-                        data_vars["SpeCap_cal/mAh/g"] = (["record"], mpt_array["Capacity/mA.h"] / m_g)
-                except (ValueError, TypeError, ZeroDivisionError) as e:
-                    logger.debug("Failed to calculate SpeCap_cal/mAh/g: %s", e)
+            BiologicMPTReader._add_gpcl_columns(data_vars, mpt_array, names, metadata, active_material_mass)
 
         return xr.Dataset(data_vars, coords={"record": np.arange(n_records)})
+
+    @staticmethod
+    def _add_gpcl_columns(data_vars: dict, mpt_array: np.ndarray, names: list[str], metadata: dict | None, mass: Any):
+        """Add calculated columns for GPCL technique."""
+        # voltage/V
+        ewe, ece = (mpt_array[k] if k in names else None for k in ("Ewe/V", "Ece/V"))
+        if ewe is not None and ece is not None:
+            data_vars["voltage/V"] = (["record"], ewe - ece)
+        elif ewe is not None:
+            data_vars["voltage/V"] = (["record"], ewe)
+        elif ece is not None:
+            data_vars["voltage/V"] = (["record"], -ece)
+
+        # systime
+        try:
+            acq_start = metadata.get("file_info", {}).get("Acquisition started on", "") if metadata else ""
+            if acq_start and "time/s" in names:
+                start_ts = datetime.strptime(acq_start, "%m/%d/%Y %H:%M:%S.%f").timestamp()
+                systimes = [datetime.fromtimestamp(start_ts + t).strftime("%Y-%m-%dT%H:%M:%S") for t in mpt_array["time/s"]]
+                data_vars["systime"] = (["record"], np.array(systimes))
+        except Exception as e:
+            logger.debug("Failed to calculate systime: %s", e)
+
+        # SpeCap_cal/mAh/g
+        if mass and "Capacity/mA.h" in names:
+            try:
+                m_str = str(mass).lower()
+                m_val = float("".join(c for c in m_str if c.isdigit() or c == "."))
+                m_g = m_val * (0.001 if "mg" in m_str else 1.0)
+                if m_g > 0:
+                    data_vars["SpeCap_cal/mAh/g"] = (["record"], mpt_array["Capacity/mA.h"] / m_g)
+            except (ValueError, TypeError, ZeroDivisionError) as e:
+                logger.debug("Failed to calculate SpeCap_cal/mAh/g: %s", e)

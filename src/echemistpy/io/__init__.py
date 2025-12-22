@@ -1,4 +1,4 @@
 from echemistpy.io.loaders import load
-from echemistpy.io.structures import RawData, RawDataInfo
+from echemistpy.io.structures import RawData, RawDataInfo, ResultsData, ResultsDataInfo
 
-__all__ = ["load", "RawData", "RawDataInfo"]
+__all__ = ["load", "RawData", "RawDataInfo", "ResultsData", "ResultsDataInfo"]

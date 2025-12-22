@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+# ruff: noqa: N999
 """XLSX Data Reader for LANHE battery test files with metadata extraction using traitlets."""
+# ruff: noqa: N999
 
 import logging
 from datetime import datetime
