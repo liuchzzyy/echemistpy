@@ -34,6 +34,15 @@ class IOPluginManager:
             plugin: Plugin instance or module
             name: Optional plugin name
         """
+        # Check if plugin is already registered by checking existing plugins
+        if name:
+            existing_plugins = dict(self.pm.list_name_plugin())
+            if name in existing_plugins:
+                # Unregister the old plugin with this name
+                old_plugin = existing_plugins[name]
+                if old_plugin is not None:
+                    self.pm.unregister(old_plugin)
+        
         self.pm.register(plugin, name=name)
         self._refresh_mappings()
 

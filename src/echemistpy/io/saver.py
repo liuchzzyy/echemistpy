@@ -1,4 +1,8 @@
-"""Utilities for persisting Measurement and Results objects."""
+"""Unified file saving interface for scientific measurements.
+
+This module provides a simplified interface for saving data using the plugin
+system. It automatically selects the appropriate plugin based on file extension.
+"""
 
 from __future__ import annotations
 
@@ -14,7 +18,7 @@ from echemistpy.io.structures import (
 )
 
 
-def save_measurement(
+def save(
     measurement: Measurement,
     info: MeasurementInfo,
     path: str | Path,
@@ -22,14 +26,18 @@ def save_measurement(
     fmt: Optional[str] = None,
     **kwargs: Any,
 ) -> None:
-    """Persist a Measurement and its Info to disk using plugin system.
+    """Save a Measurement and its Info to disk using the plugin system.
 
     Args:
-        measurement: The Measurement object to save.
-        info: The MeasurementInfo object.
-        path: Destination path.
-        fmt: Optional format override (csv, nc, h5, json).
-        **kwargs: Additional arguments for the saver.
+        measurement: The Measurement object to save
+        info: The MeasurementInfo object
+        path: Destination path
+        fmt: Optional format override (csv, nc, h5, json)
+        **kwargs: Additional arguments for the saver plugin
+
+    Example:
+        >>> save(measurement, info, "output.csv")
+        >>> save(measurement, info, "output.h5", fmt="hdf5")
     """
     destination = Path(path)
 
@@ -39,6 +47,26 @@ def save_measurement(
     # Use plugin manager to save
     pm = get_plugin_manager()
     pm.save_data(measurement.data, metadata, destination, fmt=fmt, **kwargs)
+
+
+def save_measurement(
+    measurement: Measurement,
+    info: MeasurementInfo,
+    path: str | Path,
+    *,
+    fmt: Optional[str] = None,
+    **kwargs: Any,
+) -> None:
+    """Save a Measurement and its Info to disk (alias for save()).
+
+    Args:
+        measurement: The Measurement object to save
+        info: The MeasurementInfo object
+        path: Destination path
+        fmt: Optional format override (csv, nc, h5, json)
+        **kwargs: Additional arguments for the saver plugin
+    """
+    save(measurement, info, path, fmt=fmt, **kwargs)
 
 
 def save_results(
@@ -51,16 +79,16 @@ def save_results(
     fmt: Optional[str] = None,
     **kwargs: Any,
 ) -> None:
-    """Persist Results (and optionally original Measurement) to disk using plugin system.
+    """Save AnalysisResult (and optionally original Measurement) to disk.
 
     Args:
-        results: The Results object to save.
-        results_info: The ResultsInfo object.
-        path: Destination path.
-        measurement: Optional original Measurement to include.
-        measurement_info: Optional original MeasurementInfo to include.
-        fmt: Optional format override.
-        **kwargs: Additional arguments.
+        results: The AnalysisResult object to save
+        results_info: The AnalysisResultInfo object
+        path: Destination path
+        measurement: Optional original Measurement to include
+        measurement_info: Optional original MeasurementInfo to include
+        fmt: Optional format override
+        **kwargs: Additional arguments for the saver plugin
     """
     destination = Path(path)
     extension = (fmt or destination.suffix.lstrip(".")).lower()
@@ -102,6 +130,8 @@ def save_results(
 
 
 __all__ = [
+    "save",
     "save_measurement",
     "save_results",
 ]
+
