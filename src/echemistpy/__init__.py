@@ -5,23 +5,20 @@ notebook users as well as more structured applications.
 """
 
 from .io import (
+    AnalysisResult,
+    AnalysisResultInfo,
     Measurement,
     MeasurementInfo,
     RawData,
     RawDataInfo,
-    AnalysisResult,
-    AnalysisResultInfo,
-    load_data_file,
+    load,
+    load_data_file,  # Backward compatibility
+    save,
     save_measurement,
     save_results,
 )
-from .processing import (
-    TechniqueRegistry,
-    create_default_registry,
-)
-from .pipelines import (
-    AnalysisPipeline,
-)
+from .pipelines import AnalysisPipeline
+from .processing import TechniqueRegistry, create_default_registry
 
 __all__ = [
     # Core data structures
@@ -32,7 +29,9 @@ __all__ = [
     "AnalysisResult",
     "AnalysisResultInfo",
     # I/O functions
-    "load_data_file",
+    "load",
+    "load_data_file",  # Backward compatibility
+    "save",
     "save_measurement",
     "save_results",
     # Processing
@@ -45,3 +44,4 @@ __all__ = [
 # Initialize a default registry with the analyzers that ship with the package
 default_registry = create_default_registry()
 __all__.append("default_registry")
+
