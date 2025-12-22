@@ -13,12 +13,11 @@ from typing import TYPE_CHECKING, Any, Dict, Optional, Tuple
 from echemistpy.io.plugin_manager import get_plugin_manager
 from echemistpy.io.standardizer import (
     detect_technique,
-    standardize_rawdata,
+    standardize_names,
 )
 from echemistpy.io.structures import (
     RawData,
     RawDataInfo,
-    SummaryData,
 )
 
 # Import default plugins
@@ -36,18 +35,26 @@ if TYPE_CHECKING:
     pass
 
 
-def load(path: str | Path, fmt: Optional[str] = None, **kwargs: Any) -> Tuple[RawData, RawDataInfo]:
-    """Load a raw data file and return RawData and RawDataInfo.
+def load(
+    path: str | Path,
+    fmt: Optional[str] = None,
+    technique: Optional[str | list[str]] = None,
+    standardize: bool = True,
+    **kwargs: Any,
+) -> Tuple[RawData, RawDataInfo]:
+    """Load a data file and return standardized RawData and RawDataInfo.
 
     Args:
         path: Path to the data file
         fmt: Optional format override (e.g., '.mpt')
-        **kwargs: Additional arguments passed to the reader
+        technique: Optional technique hint (string or list of strings)
+        standardize: Whether to automatically standardize the data (default: True)
+        **kwargs: Additional arguments passed to the specific reader
 
     Returns:
         Tuple of (RawData, RawDataInfo)
     """
-    path = Path(path)
+    path = Path(path) if isinstance(path, str) else path
     ext = fmt if fmt else path.suffix.lower()
 
     pm = get_plugin_manager()
@@ -56,32 +63,25 @@ def load(path: str | Path, fmt: Optional[str] = None, **kwargs: Any) -> Tuple[Ra
     if reader_class is None:
         raise ValueError(f"No loader registered for extension: {ext}")
 
-    # Instantiate reader and load data
+    # Instantiate reader and load raw data
     reader = reader_class(filepath=path, **kwargs)
-    if hasattr(reader, "load"):
-        return reader.load()
+    if not hasattr(reader, "load"):
+        raise RuntimeError(f"Reader class {reader_class.__name__} does not implement 'load' method yet.")
 
-    raise RuntimeError(f"Reader class {reader_class.__name__} does not implement 'load' method")
+    raw_data, raw_info = reader.load()
 
+    if not standardize:
+        return raw_data, raw_info
 
-def load_summary(path: str | Path, technique: Optional[str] = None, **kwargs: Any) -> Tuple[SummaryData, Any]:
-    """Load a file and return a standardized SummaryData object.
-
-    This is the high-level function that combines loading and standardization.
-    """
-    raw_data, raw_info = load(path, **kwargs)
-
-    if technique is None:
-        technique = detect_technique(raw_data.data)
-
-    return standardize_rawdata(raw_data, raw_info, technique_hint=technique)
+    # Auto-standardize
+    return standardize_names(raw_data, raw_info, technique_hint=technique)
 
 
-def register_loader(extensions: list[str], loader_class: Any) -> None:
+def _register_loader(extensions: list[str], loader_class: Any) -> None:
     """Register a new loader class for specific extensions.
 
     Args:
-        extensions: List of file extensions (e.g., ['.mpt', '.mpr'])
+        extensions: List of file extensions (e.g., ['.mpt', '.xlsx'])
         loader_class: The class to handle these files
     """
     pm = get_plugin_manager()
@@ -93,67 +93,17 @@ def register_loader(extensions: list[str], loader_class: Any) -> None:
 # ============================================================================
 
 
-def get_file_info(path: str | Path) -> Dict[str, Any]:
-    """Get basic information about a data file without fully loading it.
-
-    Args:
-        path: Path to the data file
-
-    Returns:
-        Dictionary with file information including size, format, etc.
-    """
-    path = Path(path)
-    pm = get_plugin_manager()
-    supported_extensions = pm.list_supported_extensions()
-
-    info = {
-        "path": str(path),
-        "name": path.name,
-        "size_bytes": path.stat().st_size if path.exists() else 0,
-        "extension": path.suffix.lower(),
-        "exists": path.exists(),
-        "supported": path.suffix.lower() in supported_extensions,
-    }
-
-    if not path.exists():
-        return info
-
-    # Try to get column information for supported formats
-    try:
-        if info["extension"] in {".csv", ".tsv"}:
-            # Read just the header
-            with open(path, "r", encoding="utf-8", errors="ignore") as f:
-                first_line = f.readline().strip()
-                delimiter = "," if info["extension"] == ".csv" else "\t"
-                columns = first_line.split(delimiter)
-                info["columns"] = [col.strip() for col in columns]
-                info["n_columns"] = len(columns)
-
-    except Exception:
-        # If we can't analyze, just note it
-        info["analysis_error"] = "Could not analyze file structure"
-
-    return info
-
-
 def list_supported_formats() -> Dict[str, str]:
     """Return a dictionary of supported file formats and their descriptions."""
     pm = get_plugin_manager()
     loaders = pm.get_supported_loaders()
 
-    # Group by plugin type
     formats = {}
     for ext, plugin_name in loaders.items():
         if "biologic" in plugin_name.lower():
-            formats[ext] = "BioLogic EC-Lab files"
+            formats[ext] = "BioLogic EC-Lab files (.mpt)"
         elif "lanhe" in plugin_name.lower():
-            formats[ext] = "LANHE battery test files"
-        elif "csv" in plugin_name.lower():
-            formats[ext] = "Comma/Tab-separated values"
-        elif "excel" in plugin_name.lower():
-            formats[ext] = "Excel spreadsheet"
-        elif "hdf5" in plugin_name.lower():
-            formats[ext] = "HDF5/NetCDF format"
+            formats[ext] = "LANHE battery test files (.xlsx)"
         else:
             formats[ext] = f"Loaded by {plugin_name}"
 
@@ -173,10 +123,10 @@ def _initialize_default_plugins() -> None:
 
     # Register echem-specific plugins
     if BiologicMPTReader is not None:
-        pm.register_loader([".mpt", ".mpr"], BiologicMPTReader)
+        pm.register_loader([".mpt"], BiologicMPTReader)
 
     if LanheXLSXReader is not None:
-        pm.register_loader([".xlsx", ".ccs"], LanheXLSXReader)
+        pm.register_loader([".xlsx"], LanheXLSXReader)
 
     pm.initialized = True
 
@@ -186,12 +136,6 @@ _initialize_default_plugins()
 
 
 __all__ = [
-    "detect_technique",
-    "get_file_info",
-    "get_plugin_manager",
     "list_supported_formats",
     "load",
-    "load_summary",
-    "register_loader",
-    "standardize_rawdata",
 ]

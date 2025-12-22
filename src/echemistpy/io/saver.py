@@ -13,8 +13,8 @@ from typing import Any, Optional
 import xarray as xr
 
 from echemistpy.io.structures import (
-    AnalysisResult,
-    SummaryData,
+    RawData,
+    ResultsData,
 )
 
 
@@ -58,42 +58,42 @@ def save_dataset(
         raise ValueError(f"Unsupported save format: {ext}")
 
 
-def save_summary(
-    summary_data: SummaryData,
+def save_raw_data(
+    raw_data: RawData,
     path: str | Path,
     fmt: Optional[str] = None,
     **kwargs: Any,
 ) -> None:
-    """Save a SummaryData object to disk.
+    """Save a RawData object to disk.
 
     Args:
-        summary_data: The SummaryData object to save
+        raw_data: The RawData object to save
         path: Destination path
         fmt: Optional format override
     """
     # We save the underlying xarray dataset
     # Metadata is typically stored in dataset.attrs or separately
-    save_dataset(summary_data.data, path, fmt=fmt, **kwargs)
+    save_dataset(raw_data.data, path, fmt=fmt, **kwargs)
 
 
-def save_analysis_result(
-    result: AnalysisResult,
+def save_results_data(
+    results_data: ResultsData,
     path: str | Path,
     fmt: Optional[str] = None,
     **kwargs: Any,
 ) -> None:
-    """Save an AnalysisResult object to disk.
+    """Save a ResultsData object to disk.
 
     Args:
-        result: The AnalysisResult object to save
+        results_data: The ResultsData object to save
         path: Destination path
         fmt: Optional format override
     """
-    save_dataset(result.data, path, fmt=fmt, **kwargs)
+    save_dataset(results_data.data, path, fmt=fmt, **kwargs)
 
 
 __all__ = [
-    "save_analysis_result",
     "save_dataset",
-    "save_summary",
+    "save_raw_data",
+    "save_results_data",
 ]

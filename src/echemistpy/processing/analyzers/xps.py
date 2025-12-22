@@ -20,16 +20,16 @@ class XPSAnalyzer(TechniqueAnalyzer):
     def required_columns(self) -> tuple[str, ...]:
         return ("binding_energy", "counts")
 
-    def preprocess(self, summary_data):
-        summary_data.data = summary_data.data.sortby("binding_energy", ascending=False)
-        counts = summary_data.data["counts"].values
+    def preprocess(self, raw_data):
+        raw_data.data = raw_data.data.sortby("binding_energy", ascending=False)
+        counts = raw_data.data["counts"].values
         smoothed = savgol_filter(counts, window_length=9, polyorder=2)
-        dim = summary_data.data["counts"].dims[0]
-        summary_data.data["smoothed"] = (dim, smoothed)
-        return summary_data
+        dim = raw_data.data["counts"].dims[0]
+        raw_data.data["smoothed"] = (dim, smoothed)
+        return raw_data
 
-    def compute(self, summary_data) -> tuple[Dict[str, Any], Dict[str, xr.Dataset]]:
-        data = summary_data.data
+    def compute(self, raw_data) -> tuple[Dict[str, Any], Dict[str, xr.Dataset]]:
+        data = raw_data.data
         energy = data["binding_energy"].values
         smoothed = data["smoothed"].values
         derivative = np.gradient(smoothed, energy)

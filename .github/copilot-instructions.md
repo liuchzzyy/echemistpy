@@ -15,12 +15,11 @@ echemistpy 是一个科学数据分析库，专注于电化学技术和材料表
 
 ### 数据流设计
 
-- **RawData** + **RawDataInfo** (`io/structures.py`): 原始仪器数据的容器，包含 `xarray.Dataset` 和元数据
-- **SummaryData** + **SummaryDataInfo** (`io/structures.py`): 标准化后的测量数据，包含 `xarray.Dataset` 和实验元数据
-- **AnalysisResult** + **AnalysisResultInfo** (`io/structures.py`): 分析后的结果，包含 `xarray.Dataset` 和实验元数据
-- **TechniqueAnalyzer** (`processing/analysis/base.py`): 所有分析器的抽象基类，实现 `analyze()` 方法
-- **AnalysisPipeline** (`pipelines/manager.py`): 协调加载、分析和聚合的高级编排器
-- **TechniqueRegistry** (`processing/analysis/registry.py`): 技术标识符到分析器实例的映射注册表
+- **RawData** + **RawDataInfo** (`io/structures.py`): 测量数据的容器，包含 `xarray.Dataset` 和元数据。`load()` 函数会自动读取并标准化这些数据。
+- **ResultsData** + **ResultsDataInfo** (`io/structures.py`): 分析后的结果，包含 `xarray.Dataset` 和实验元数据。
+- **TechniqueAnalyzer** (`processing/analysis/base.py`): 所有分析器的抽象基类，实现 `analyze()` 方法。
+- **AnalysisPipeline** (`pipelines/manager.py`): 协调加载、分析和聚合的高级编排器。
+- **TechniqueRegistry** (`processing/analysis/registry.py`): 技术标识符到分析器实例的映射注册表。
 
 ### 分析器实现模式
 
@@ -34,7 +33,7 @@ class CustomAnalyzer(TechniqueAnalyzer):
     def required_columns(self) -> tuple[str, ...]:
         return ("col1", "col2")  # 必需的数据列
 
-    def compute(self, summary: SummaryData) -> tuple[Dict[str, Any], Dict[str, xr.Dataset]]:
+    def compute(self, raw_data: RawData) -> tuple[Dict[str, Any], Dict[str, xr.Dataset]]:
         # 返回 (summary_dict, tables_dict)
         return summary, tables
 ```
@@ -43,11 +42,10 @@ class CustomAnalyzer(TechniqueAnalyzer):
 
 ### 数据加载流程
 
-1. **RawData 阶段**: 仪器特定读取器 → `RawData` + `RawDataInfo`
-2. **SummaryData 阶段**: 数据标准化 → `SummaryData` + `SummaryDataInfo` (统一列名、单位)
-3. **Analysis 阶段**: 技术特定分析器 → `AnalysisResult` + `AnalysisResultInfo`
+1. **加载与标准化**: 使用 `load()` 自动处理整个流程（读取原始数据 -> 自动检测技术 -> 标准化列名和元数据）。
+2. **结果**: 返回 `RawData` + `RawDataInfo`。
 
-使用 `load()` 自动处理整个流程，或手动调用各阶段函数实现细粒度控制。
+如果需要完全未处理的数据，可以使用 `load(path, standardize=False)`。
 
 ## 开发工作流
 
@@ -105,10 +103,10 @@ ruff format src/ tests/  # 代码格式化
 
 ### I/O 模式
 
-- [io/loaders.py](src/echemistpy/io/loaders.py): `load()` 协调整个数据加载流程
+- [io/loaders.py](src/echemistpy/io/loaders.py): `load()` 协调整个数据加载和标准化流程
 - [io/saver.py](src/echemistpy/io/saver.py): `save_table()` 导出 `xarray.Dataset` 到各种格式
 - 所有数据使用 `xarray.Dataset` 作为内部表示，坐标名为 "row"
-- 数据标准化: `standardize_rawdata()` 统一不同仪器的列名和单位
+- 数据标准化: `standardize_names()` 统一不同仪器的列名和单位
 
 ## 项目特定约定
 
@@ -116,7 +114,7 @@ ruff format src/ tests/  # 代码格式化
 
 - Jupyter notebooks 在 [docs/Characterization/](docs/Characterization/) 按技术分类
 - 示例数据文件在 [examples/echem/](examples/echem/)
-- 所有源码使用绝对导入: `from echemistpy.io import SummaryData`
+- 所有源码使用绝对导入: `from echemistpy.io import AnalysisData`
 - 分析器模块在 [processing/analysis/](src/echemistpy/processing/analysis/) 下
 
 ### 数据约定
@@ -135,11 +133,11 @@ ruff format src/ tests/  # 代码格式化
 
 ## 常见模式
 
-### 创建 SummaryData 对象
+### 创建 AnalysisData 对象
 
 ```python
-metadata = SummaryDataInfo(technique="xrd", sample_name="Sample-01")
-summary = SummaryData(data=xr_dataset)
+metadata = AnalysisDataInfo(technique="xrd", sample_name="Sample-01")
+analysis_data = AnalysisData(data=xr_dataset)
 ```
 
 ### 运行分析管道
@@ -152,7 +150,7 @@ summary_table = pipeline.summary_table(results)
 
 ### 处理分析结果
 
-`AnalysisResult` 包含 `summary` (字典)、`tables` (xarray.Dataset 字典) 和可选的 `figures`。
+`ResultsData` 包含 `summary` (字典)、`tables` (xarray.Dataset 字典) 和可选的 `figures`。
 
 ### 读取仪器数据文件
 

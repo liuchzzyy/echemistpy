@@ -5,15 +5,19 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import Dict, TYPE_CHECKING
 
+from traitlets import Dict as TDict, HasTraits
+
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from .base import TechniqueAnalyzer
 
 
-class TechniqueRegistry:
+class TechniqueRegistry(HasTraits):
     """Map technique identifiers to analyzer instances."""
 
-    def __init__(self) -> None:
-        self._registry: Dict[str, "TechniqueAnalyzer"] = {}
+    _registry = TDict(help="Internal registry mapping technique identifiers to analyzer instances")
+
+    def __init__(self, **kwargs) -> None:
+        super().__init__(**kwargs)
 
     def register(self, technique: str, analyzer: "TechniqueAnalyzer") -> None:
         """Register an analyzer for a technique.

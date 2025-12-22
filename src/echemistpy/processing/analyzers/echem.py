@@ -19,16 +19,16 @@ class CyclicVoltammetryAnalyzer(TechniqueAnalyzer):
     def required_columns(self) -> tuple[str, ...]:
         return ("potential", "current")
 
-    def preprocess(self, summary_data):
-        data = summary_data.data.sortby("potential")
+    def preprocess(self, raw_data):
+        data = raw_data.data.sortby("potential")
         dim = data["current"].dims[0]
         baseline = float(data["current"].values.mean())
         normalized = data["current"].values - baseline
-        summary_data.data = data.assign(baseline_corrected=(dim, normalized))
-        return summary_data
+        raw_data.data = data.assign(baseline_corrected=(dim, normalized))
+        return raw_data
 
-    def compute(self, summary_data) -> tuple[Dict[str, Any], Dict[str, xr.Dataset]]:
-        data = summary_data.data
+    def compute(self, raw_data) -> tuple[Dict[str, Any], Dict[str, xr.Dataset]]:
+        data = raw_data.data
         potential = data["potential"].values
         corrected = data["baseline_corrected"].values
         dim = data["baseline_corrected"].dims[0]

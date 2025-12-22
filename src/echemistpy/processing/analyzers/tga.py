@@ -19,15 +19,15 @@ class TGAAnalyzer(TechniqueAnalyzer):
     def required_columns(self) -> tuple[str, ...]:
         return ("temperature", "mass")
 
-    def preprocess(self, summary_data):
-        summary_data.data = summary_data.data.sortby("temperature")
-        dim = summary_data.data["mass"].dims[0]
-        mass_fraction = summary_data.data["mass"].values / summary_data.data["mass"].values.max()
-        summary_data.data["mass_fraction"] = (dim, mass_fraction)
-        return summary_data
+    def preprocess(self, raw_data):
+        raw_data.data = raw_data.data.sortby("temperature")
+        dim = raw_data.data["mass"].dims[0]
+        mass_fraction = raw_data.data["mass"].values / raw_data.data["mass"].values.max()
+        raw_data.data["mass_fraction"] = (dim, mass_fraction)
+        return raw_data
 
-    def compute(self, summary_data) -> tuple[Dict[str, Any], Dict[str, xr.Dataset]]:
-        data = summary_data.data
+    def compute(self, raw_data) -> tuple[Dict[str, Any], Dict[str, xr.Dataset]]:
+        data = raw_data.data
         temperature = data["temperature"].values
         mass_fraction = data["mass_fraction"].values
         derivative = np.gradient(mass_fraction, temperature)

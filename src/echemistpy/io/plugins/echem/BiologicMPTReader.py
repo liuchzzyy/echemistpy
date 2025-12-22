@@ -511,6 +511,8 @@ class BiologicMPTReader(HasTraits):
     """Reader for BioLogic MPT files."""
 
     filepath = Unicode()
+    technique = ["echem"]
+    instrument = "BioLogic"
 
     def __init__(self, filepath: str | Path | None = None, **kwargs):
         super().__init__(**kwargs)
@@ -544,7 +546,21 @@ class BiologicMPTReader(HasTraits):
 
         # Create RawData and RawDataInfo
         raw_data = RawData(data=ds)
-        raw_info = RawDataInfo(meta=cleaned_metadata)
+
+        # Extract top-level metadata from cleaned_metadata
+        test_info = cleaned_metadata.get("test_information", {})
+        sample_name = str(test_info.get("name", "Unknown"))
+        start_time = test_info.get("Acquisition started on")
+        operator = test_info.get("Operator")
+
+        raw_info = RawDataInfo(
+            sample_name=sample_name,
+            start_time=start_time,
+            operator=operator,
+            technique=self.technique,
+            instrument=self.instrument,
+            others=cleaned_metadata,
+        )
 
         return raw_data, raw_info
 
@@ -675,12 +691,12 @@ class BiologicMPTReader(HasTraits):
         cleaned: dict[str, Any] = {}
 
         if "file_info" not in metadata:
-            return cleaned
+            return metadata
 
         file_info = metadata["file_info"]
 
         # Use raw keys from MPT file
-        test_info_keys = ["technique", "Electrode material", "Electrolyte", "Mass of active material", "Reference electrode", "Acquisition started on"]
+        test_info_keys = ["technique", "Electrode material", "Electrolyte", "Mass of active material", "Reference electrode", "Acquisition started on", "Operator"]
         test_info = {key: file_info[key] for key in test_info_keys if key in file_info}
 
         if "Saved on" in file_info:
@@ -707,7 +723,15 @@ class BiologicMPTReader(HasTraits):
             work_mode = file_info["work_mode"]
             cleaned["work_mode"] = work_mode if isinstance(work_mode, list) else [work_mode]
 
-        return cleaned
+        # Ensure technique is set at top level for standardizer
+        cleaned["technique"] = file_info.get("technique", ["echem"])
+        if isinstance(cleaned["technique"], str):
+            cleaned["technique"] = [cleaned["technique"]]
+
+        # Merge with original metadata to ensure nothing is lost
+        final_meta = cleaned.copy()
+        final_meta.update(metadata)
+        return final_meta
 
     @staticmethod
     def _clean_data(data: dict[str, Any], metadata: dict[str, Any] | None = None) -> pd.DataFrame:

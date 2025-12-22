@@ -3,8 +3,9 @@
 """XLSX Data Reader for LANHE battery test files with metadata extraction using traitlets."""
 
 import logging
+from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 import openpyxl
 import openpyxl.worksheet.worksheet
@@ -20,6 +21,10 @@ class LanheXLSXReader(HasTraits):
     """Reader for LANHE exported XLSX files."""
 
     filepath = Unicode()
+    technique: ClassVar[list[str]] = [
+        "echem",
+    ]
+    instrument: ClassVar[str] = "LANHE"
 
     def __init__(self, filepath: str | Path | None = None, **kwargs):
         super().__init__(**kwargs)
@@ -47,12 +52,27 @@ class LanheXLSXReader(HasTraits):
 
         # Create RawData and RawDataInfo
         raw_data = RawData(data=ds)
-        raw_info = RawDataInfo(meta=cleaned_metadata)
+
+        # Extract top-level metadata from cleaned_metadata
+        sample_name = str(cleaned_metadata.get("test_name", "Unknown"))
+        start_time = cleaned_metadata.get("start_time")
+        if hasattr(start_time, "strftime"):
+            start_time = start_time.strftime("%Y-%m-%d %H:%M:%S")
+        operator = cleaned_metadata.get("operator")
+
+        raw_info = RawDataInfo(
+            sample_name=sample_name,
+            start_time=start_time,
+            operator=operator,
+            technique=self.technique,
+            instrument=self.instrument,
+            others=cleaned_metadata,
+        )
 
         return raw_data, raw_info
 
     def _read_xlsx(self) -> tuple[dict[str, Any], dict[str, Any]]:
-        """Read metadata and data from XLSX file."""
+        """Read metadata and data from LANHE .xlsx file."""
         metadata: dict[str, Any] = {}
         data_dict: dict[str, Any] = {}
         data_sheet_name: str | None = None
@@ -73,53 +93,32 @@ class LanheXLSXReader(HasTraits):
 
     def _read_record_data_from_ws(self, ws: openpyxl.worksheet.worksheet.Worksheet, data_sheet_name: str) -> dict[str, Any]:
         """Extract record-level data from an open worksheet."""
-        data_dict = {}
-        record_header_row = None
-        record_data_rows = []
-
+        header, rows = None, []
         for row in ws.iter_rows(values_only=True):
             if not row[0]:
                 continue
 
-            # Look for the record-level header (starts with "Cycle")
-            if str(row[0]).strip().lower() == "cycle" and len(row) > 15:
-                # Check if it has the characteristic record columns
-                row_str = " ".join(str(cell).lower() for cell in row[:10] if cell)
-                if "step" in row_str and "record" in row_str:
-                    record_header_row = [str(cell) if cell else "" for cell in row]
-                    record_header_row = [h.strip() for h in record_header_row if h.strip()]
-                    continue
+            # Header detection
+            if str(row[0]).strip().lower() == "cycle" and len(row) > 15 and "step" in " ".join(str(c).lower() for c in row[:10] if c):
+                header = [str(c).strip() for c in row if c and str(c).strip()]
+                continue
 
-            # Extract record data rows (numeric cycle + step + record)
-            if record_header_row and row[0] and row[1] and row[2]:
+            # Data extraction
+            if header and all(row[:3]):
                 try:
-                    int(row[0])  # cycle
-                    int(row[1])  # step
-                    int(row[2])  # record
-                    workmode = str(row[3]) if len(row) > 3 else ""
-                    if any(kw in workmode for kw in ["REST", "CRATE", "LOOP", "END", "CHARGE", "DISCHARGE"]):
-                        record_data_rows.append(row)
+                    int(row[0]), int(row[1]), int(row[2])
+                    mode = str(row[3]) if len(row) > 3 else ""
+                    if any(kw in mode for kw in ["REST", "CRATE", "LOOP", "END", "CHARGE", "DISCHARGE"]):
+                        rows.append(row)
                 except (ValueError, TypeError):
                     pass
 
-        # Convert record data to dict
-        if record_header_row and record_data_rows:
-            for col_idx, header in enumerate(record_header_row):
-                col_data = []
-                for row_data in record_data_rows:
-                    if col_idx < len(row_data):
-                        col_data.append(self._convert_value(row_data[col_idx]))
-                    else:
-                        col_data.append(None)
-                data_dict[header] = col_data
+        if not (header and rows):
+            return {}
 
-            data_dict["_metadata"] = {
-                "sheet_name": data_sheet_name,
-                "num_rows": len(record_data_rows),
-                "num_columns": len(record_header_row),
-                "columns": record_header_row,
-            }
-        return data_dict
+        data = {h: [self._convert_time(r[i]) if i < len(r) else None for r in rows] for i, h in enumerate(header)}
+        data["_metadata"] = {"sheet_name": data_sheet_name, "num_rows": len(rows), "num_columns": len(header), "columns": header}
+        return data
 
     def _read_test_info(self, wb: openpyxl.Workbook, metadata: dict[str, Any]) -> None:
         """Read Test Information sheet."""
@@ -128,63 +127,40 @@ class LanheXLSXReader(HasTraits):
                 ws = wb["Test information"]
                 headers = [str(cell.value) for cell in ws[1] if cell.value]
                 if ws.max_row >= 2:
-                    test_info = {}
-                    for i, header in enumerate(headers):
-                        if i < len(ws[2]):
-                            value = self._convert_value(ws[2][i].value)
-                            test_info[header] = value
-                    metadata["Test_Information"] = test_info
+                    metadata["Test_Information"] = {h: self._convert_time(ws[2][i].value) for i, h in enumerate(headers) if i < len(ws[2])}
             except Exception as e:
                 logger.debug("Error reading Test Information: %s", e)
 
     def _read_proc_info(self, wb: openpyxl.Workbook, metadata: dict[str, Any]) -> None:
         """Read Ch1_Proc sheet and extract Work Mode table."""
-        if "Ch1_Proc" in wb.sheetnames:
-            try:
-                ws = wb["Ch1_Proc"]
-                proc_info = {}
-                work_mode_table = []
-                table_headers = None
-
-                for row in ws.iter_rows(values_only=True):
-                    if not row[0]:
-                        continue
-                    first_col = str(row[0]) if row[0] else ""
-                    if first_col == "Order":
-                        table_headers = [str(cell) if cell else "" for cell in row]
-                        table_headers = [h for h in table_headers if h]
-                        continue
-                    if table_headers:
-                        if not row[0] or (isinstance(row[0], str) and not row[0].strip()):
-                            break
-                        table_row = {}
-                        for i, header in enumerate(table_headers):
-                            value = self._convert_value(row[i]) if i < len(row) else None
-                            table_row[header] = value
-                        work_mode_table.append(table_row)
-                    elif row[1]:
-                        proc_info[first_col] = self._convert_value(row[1])
-                if work_mode_table:
-                    proc_info["Work_Mode"] = work_mode_table
-                metadata["Channel_Process_Info"] = proc_info
-            except Exception as e:
-                logger.debug("Error reading Channel Process Info: %s", e)
+        if "Ch1_Proc" not in wb.sheetnames:
+            return
+        try:
+            ws, proc_info, work_mode, headers = wb["Ch1_Proc"], {}, [], None
+            for row in ws.iter_rows(values_only=True):
+                if not row[0]:
+                    continue
+                if str(row[0]) == "Order":
+                    headers = [str(c) for c in row if c]
+                elif headers:
+                    if not str(row[0]).strip():
+                        break
+                    work_mode.append({h: self._convert_time(row[i]) for i, h in enumerate(headers) if i < len(row)})
+                elif row[1]:
+                    proc_info[str(row[0])] = self._convert_time(row[1])
+            if work_mode:
+                proc_info["Work_Mode"] = work_mode
+            metadata["Channel_Process_Info"] = proc_info
+        except Exception as e:
+            logger.debug("Error reading Channel Process Info: %s", e)
 
     def _read_log_info(self, wb: openpyxl.Workbook, metadata: dict[str, Any]) -> None:
         """Read Log sheet."""
         if "Log" in wb.sheetnames:
             try:
                 ws = wb["Log"]
-                headers = [str(cell.value) for cell in ws[1] if cell.value]
-                log_info: list[dict[str, Any]] = []
-                for row in ws.iter_rows(min_row=2, values_only=True):
-                    if row[0]:
-                        log_entry = {}
-                        for i, header in enumerate(headers):
-                            value = self._convert_value(row[i]) if i < len(row) else None
-                            log_entry[header] = value
-                        log_info.append(log_entry)
-                metadata["Log_Info"] = log_info
+                headers = [str(c.value) for c in ws[1] if c.value]
+                metadata["Log_Info"] = [{h: self._convert_time(r[i]) for i, h in enumerate(headers) if i < len(r)} for r in ws.iter_rows(min_row=2, values_only=True) if r[0]]
             except Exception as e:
                 logger.debug("Error reading Log Info: %s", e)
 
@@ -197,62 +173,115 @@ class LanheXLSXReader(HasTraits):
         return None
 
     @staticmethod
-    def _convert_value(value: Any) -> Any:
-        """Convert datetime/timedelta objects to string format."""
-        if hasattr(value, "strftime"):
-            return value.strftime("%Y-%m-%d %H:%M:%S")
-        elif hasattr(value, "total_seconds"):
-            return str(value)
+    def _convert_time(value: Any) -> Any:
+        """Convert Excel values (datetime, timedelta, or LANHE time strings) to standard formats."""
+        if value is None or isinstance(value, datetime):
+            return value
+
+        if hasattr(value, "total_seconds"):
+            return value.total_seconds()
+
+        if not (isinstance(value, str) and ":" in value):
+            return value
+
+        if " " in value:
+            parts = value.split(" ", 1)
+            # Try absolute time first, then duration
+            return LanheXLSXReader._parse_abs_time(parts[0], parts[1]) or LanheXLSXReader._parse_duration(parts[0], parts[1]) or value
+
+        if len(value) == 10 and value[4] in {"-", "/"}:
+            try:
+                return datetime(int(value[0:4]), int(value[5:7]), int(value[8:10]))
+            except (ValueError, IndexError):
+                pass
         return value
+
+    @staticmethod
+    def _parse_abs_time(first: str, second: str) -> datetime | None:
+        """Parse YYYY-MM-DD HH:MM:SS.mmm format."""
+        if len(first) == 10 and first[4] in {"-", "/"}:
+            try:
+                year, month, day = int(first[0:4]), int(first[5:7]), int(first[8:10])
+                hour, minute = int(second[0:2]), int(second[3:5])
+                if "." in second:
+                    sec_parts = second[6:].split(".")
+                    usec = int(sec_parts[1].ljust(6, "0")[:6])
+                    return datetime(year, month, day, hour, minute, int(sec_parts[0]), usec)
+                return datetime(year, month, day, hour, minute, int(second[6:8]))
+            except (ValueError, IndexError):
+                pass
+        return None
+
+    @staticmethod
+    def _parse_duration(first: str, second: str) -> float | None:
+        """Parse D HH:MM:SS.mmm format."""
+        if len(first) <= 3 and first.isdigit():
+            try:
+                hms = second.split(":")
+                if len(hms) == 3:
+                    return int(first) * 86400 + int(hms[0]) * 3600 + int(hms[1]) * 60 + float(hms[2])
+            except (ValueError, IndexError):
+                pass
+        return None
 
     @staticmethod
     def _clean_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
         """Clean metadata to keep only essential fields."""
         cleaned = {}
 
-        # Test Information fields to keep
-        test_info_keys = ["Test Name", "Start Time", "Finish Time", "Active material"]
+        def get_val(d, key):
+            k = next((k for k in d if k.lower() == key.lower()), None)
+            return d.get(k) if k else None
+
+        # Test Information
         if "Test_Information" in metadata:
-            test_info = metadata["Test_Information"]
-            cleaned_test_info = {k: test_info[k] for k in test_info_keys if k in test_info}
+            info = metadata["Test_Information"]
+            for key in ["Test name", "Start time", "Finish time", "Active material", "Operator"]:
+                val = get_val(info, key)
+                if val:
+                    cleaned[key.lower().replace(" ", "_")] = val
 
-            # Parse and split "Active material" field if needed
-            if "Active material" in cleaned_test_info:
-                active_material_str = str(cleaned_test_info["Active material"])
-                if " Active material: " in active_material_str:
-                    parts = active_material_str.split(" Active material: ")
-                    if len(parts) == 2:
-                        capacity = parts[0].replace("Nominal specific capacity: ", "").strip()
-                        material = parts[1].strip()
-                        cleaned_test_info["nominal_specific_capacity"] = capacity
-                        cleaned_test_info["active_material_mass"] = material
+            # Parse Active material
+            am = cleaned.get("active_material")
+            if am and " Active material: " in str(am):
+                parts = str(am).split(" Active material: ")
+                cleaned["nominal_specific_capacity"] = parts[0].replace("Nominal specific capacity: ", "").strip()
+                cleaned["active_material_mass"] = parts[1].strip()
 
-            cleaned["test_information"] = cleaned_test_info
-
-        # Channel Process Info fields to keep
-        proc_info_keys = ["Channel Number", "Name", "Description", "Unit Scheme", "Safety", "Work_Mode"]
+        # Channel Process Info
         if "Channel_Process_Info" in metadata:
-            proc_info = metadata["Channel_Process_Info"]
-            cleaned["channel_process_info"] = {k: proc_info[k] for k in proc_info_keys if k in proc_info}
+            info = metadata["Channel_Process_Info"]
+            proc = {}
+            for key in ["Channel Number", "Name", "Description", "Unit Scheme", "Safety", "Work_Mode"]:
+                val = get_val(info, key)
+                if val:
+                    proc[key.lower().replace(" ", "_")] = val
+            cleaned["channel_process_info"] = proc
 
-        # Ensure technique is set
-        cleaned["technique"] = metadata.get("technique", "echem")
+        # Technique
+        tech = metadata.get("technique", ["echem"])
+        cleaned["technique"] = [tech] if isinstance(tech, str) else tech
 
-        # Merge with original metadata to ensure nothing is lost
-        final_meta = cleaned.copy()
-        final_meta.update(metadata)
-        return final_meta
+        return {**metadata, **cleaned}
 
     @staticmethod
     def _clean_data(data: dict[str, Any]) -> dict[str, Any]:
-        """Clean data to keep only specified columns from record-level data."""
-        # For now, we keep all columns as per "不需要统一列的名字"
-        if not data:
-            return {}
+        """Return data with original headers, filtering for requested columns."""
+        # Columns to keep as requested by user
+        keep_cols = [
+            "Record",
+            "Cycle",
+            "SysTime",
+            "TestTime",
+            "Voltage/V",
+            "Current/uA",
+            "Capacity/uAh",
+            "SpeCap/mAh/g",
+            "dQdV/uAh/V",
+            "dVdQ/V/uAh",
+        ]
 
-        cleaned_data = data.copy()
-        # Remove internal metadata that shouldn't be in the Dataset variables
-        if "_metadata" in cleaned_data:
-            del cleaned_data["_metadata"]
+        # Filter the dictionary to keep only requested columns that exist
+        cleaned_data = {k: v for k, v in data.items() if k in keep_cols}
 
         return cleaned_data
