@@ -127,10 +127,12 @@ class DataStandardizer(HasTraits):
             "2theta": "2theta/deg",
             "2Theta": "2theta/deg",
             "angle": "2theta/deg",
-            "intensity": "intensity/counts",
-            "Intensity": "intensity/counts",
-            "counts": "intensity/counts",
-            "Counts": "intensity/counts",
+            "intensity": "intensity",
+            "Intensity": "intensity",
+            "counts": "intensity",
+            "Counts": "intensity",
+            "d-spacing": "d_spacing/Å",
+            "d_spacing": "d_spacing/Å",
         },
         "xps": {
             "binding_energy": "BE/eV",
@@ -208,7 +210,9 @@ class DataStandardizer(HasTraits):
 
         # Apply renaming
         rename_dict = {}
-        for old_name in self.dataset.data_vars:
+        # Check both data variables and coordinates
+        all_names = list(self.dataset.data_vars) + list(self.dataset.coords)
+        for old_name in all_names:
             if old_name in mapping:
                 rename_dict[old_name] = mapping[old_name]
 

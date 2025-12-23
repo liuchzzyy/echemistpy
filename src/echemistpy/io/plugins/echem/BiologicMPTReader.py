@@ -21,7 +21,7 @@ from typing import Any, ClassVar
 import numpy as np
 import pandas as pd
 import xarray as xr
-from traitlets import HasTraits, Unicode
+from traitlets import HasTraits, List, Unicode
 
 from echemistpy.io.structures import RawData, RawDataInfo
 
@@ -534,8 +534,12 @@ class BiologicMPTReader(HasTraits):
 
     filepath = Unicode()
     active_material_mass = Unicode(allow_none=True)
-    technique: ClassVar[list[str]] = ["echem"]
-    instrument: ClassVar[str] = "BioLogic"
+    sample_name = Unicode(None, allow_none=True)
+    start_time = Unicode(None, allow_none=True)
+    instrument = Unicode("BioLogic", allow_none=True)
+    operator = Unicode(None, allow_none=True)
+    wave_number = Unicode(None, allow_none=True)
+    technique = List(Unicode(), default_value=["echem"])
 
     def __init__(self, filepath: str | Path | None = None, **kwargs):
         super().__init__(**kwargs)
@@ -576,12 +580,13 @@ class BiologicMPTReader(HasTraits):
         # Create RawData and RawDataInfo
         raw_data = RawData(data=ds)
         raw_info = RawDataInfo(
-            sample_name=str(test_info.get("name", "Unknown")),
-            start_time=test_info.get("Acquisition started on"),
-            operator=test_info.get("Operator"),
-            technique=tech_list,
+            sample_name=self.sample_name or str(test_info.get("name", "Unknown")),
+            start_time=self.start_time or test_info.get("Acquisition started on"),
+            operator=self.operator or test_info.get("Operator"),
+            technique=self.technique if self.technique != ["echem"] else tech_list,
             instrument=self.instrument,
             active_material_mass=str(mass) if mass is not None else None,
+            wave_number=self.wave_number,
             others=cleaned_metadata,
         )
 

@@ -12,7 +12,7 @@ from typing import Any, ClassVar
 import openpyxl
 import openpyxl.worksheet.worksheet
 import xarray as xr
-from traitlets import HasTraits, Unicode
+from traitlets import HasTraits, List, Unicode
 
 from echemistpy.io.structures import RawData, RawDataInfo
 
@@ -24,10 +24,12 @@ class LanheXLSXReader(HasTraits):
 
     filepath = Unicode()
     active_material_mass = Unicode(allow_none=True)
-    technique: ClassVar[list[str]] = [
-        "echem",
-    ]
-    instrument: ClassVar[str] = "LANHE"
+    sample_name = Unicode(None, allow_none=True)
+    start_time = Unicode(None, allow_none=True)
+    instrument = Unicode("LANHE", allow_none=True)
+    operator = Unicode(None, allow_none=True)
+    wave_number = Unicode(None, allow_none=True)
+    technique = List(Unicode(), default_value=["echem"])
 
     def __init__(self, filepath: str | Path | None = None, **kwargs):
         super().__init__(**kwargs)
@@ -64,21 +66,20 @@ class LanheXLSXReader(HasTraits):
         raw_data = RawData(data=ds)
 
         # Extract top-level metadata
-        start_time = cleaned_metadata.get("start_time")
-        if isinstance(start_time, datetime):
-            start_time = start_time.strftime("%Y-%m-%d %H:%M:%S")
+        start_time_val = self.start_time or cleaned_metadata.get("start_time")
+        if isinstance(start_time_val, datetime):
+            start_time_val = start_time_val.strftime("%Y-%m-%d %H:%M:%S")
 
-        tech_list = list(self.technique)
-        if "gcd" not in tech_list:
-            tech_list.append("gcd")
+        tech_list = self.technique if self.technique != ["echem"] else list(self.technique) + ["gcd"]
 
         raw_info = RawDataInfo(
-            sample_name=str(cleaned_metadata.get("test_name", "Unknown")),
-            start_time=start_time,
-            operator=cleaned_metadata.get("operator"),
+            sample_name=self.sample_name or str(cleaned_metadata.get("test_name", "Unknown")),
+            start_time=start_time_val,
+            operator=self.operator or cleaned_metadata.get("operator"),
             technique=tech_list,
             instrument=self.instrument,
             active_material_mass=mass,
+            wave_number=self.wave_number,
             others=cleaned_metadata,
         )
 

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, ClassVar, Optional, cast
+from typing import Any, Optional, cast
 
 import pandas as pd
 import xarray as xr
@@ -20,9 +20,9 @@ class MetadataInfoMixin:
         """Convert metadata to dictionary representation.
 
         Returns:
-            Dictionary containing all metadata fields
+            Dictionary containing all metadata fields (excluding None values)
         """
-        return cast(HasTraits, self).trait_values()
+        return {k: v for k, v in cast(HasTraits, self).trait_values().items() if v is not None}
 
     def get(self, key: str, default: Any = None) -> Any:
         """Get metadata value by key.
@@ -60,9 +60,9 @@ class MetadataInfoMixin:
         # Determine dynamic container
         container = None
         if hasattr(self, "parameters"):
-            container = getattr(self, "parameters")
+            container = self.parameters
         elif hasattr(self, "others"):
-            container = getattr(self, "others")
+            container = self.others
 
         for key, value in other.items():
             if cast(HasTraits, self).has_trait(key):
@@ -184,6 +184,7 @@ class BaseInfo(HasTraits, MetadataInfoMixin):
     operator = Unicode(None, allow_none=True)
     instrument = Unicode(None, allow_none=True)
     active_material_mass = Unicode(None, allow_none=True)
+    wave_number = Unicode(None, allow_none=True)
 
     def copy(self) -> Any:
         """Create a copy of the info object.

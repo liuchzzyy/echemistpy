@@ -30,6 +30,11 @@ try:
 except ImportError:
     LanheXLSXReader = None  # type: ignore
 
+try:
+    from echemistpy.io.plugins.xrd.NOTOs import NOTOsReader
+except ImportError:
+    NOTOsReader = None  # type: ignore
+
 if TYPE_CHECKING:
     pass
 
@@ -43,6 +48,7 @@ def load(
     instrument: Optional[str] = None,
     operator: Optional[str] = None,
     active_material_mass: Optional[str] = None,
+    wave_number: Optional[str] = None,
     standardize: bool = True,
     **kwargs: Any,
 ) -> Tuple[RawData, RawDataInfo]:
@@ -57,6 +63,7 @@ def load(
         instrument: Optional instrument name override
         operator: Optional operator name override
         active_material_mass: Optional active material mass override
+        wave_number: Optional wave number override
         standardize: Whether to automatically standardize the data (default: True)
         **kwargs: Additional arguments passed to the specific reader
 
@@ -73,6 +80,19 @@ def load(
         raise ValueError(f"No loader registered for extension: {ext}")
 
     # Instantiate reader and load raw data
+    # Pass standard metadata to reader if provided
+    standard_metadata = {
+        "sample_name": sample_name,
+        "start_time": start_time,
+        "instrument": instrument,
+        "operator": operator,
+        "active_material_mass": active_material_mass,
+        "wave_number": wave_number,
+    }
+    for k, v in standard_metadata.items():
+        if v is not None:
+            kwargs[k] = v
+
     reader = reader_class(filepath=path, **kwargs)
     if not hasattr(reader, "load"):
         raise RuntimeError(f"Reader class {reader_class.__name__} does not implement 'load' method yet.")
@@ -85,6 +105,7 @@ def load(
         "start_time": start_time,
         "instrument": instrument,
         "operator": operator,
+        "wave_number": wave_number,
         "active_material_mass": active_material_mass,
     }
     if technique:
@@ -129,6 +150,8 @@ def list_supported_formats() -> Dict[str, str]:
             formats[ext] = "BioLogic EC-Lab files (.mpt)"
         elif "lanhe" in plugin_name.lower():
             formats[ext] = "LANHE battery test files (.xlsx)"
+        elif "notos" in plugin_name.lower():
+            formats[ext] = "NOTOs XRD files (.xye)"
         else:
             formats[ext] = f"Loaded by {plugin_name}"
 
@@ -152,6 +175,9 @@ def _initialize_default_plugins() -> None:
 
     if LanheXLSXReader is not None:
         pm.register_loader([".xlsx"], LanheXLSXReader)
+
+    if NOTOsReader is not None:
+        pm.register_loader([".xye"], NOTOsReader)
 
     pm.initialized = True
 
