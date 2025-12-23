@@ -56,7 +56,7 @@ def test_data_standardizer_full_standardize():
     """Test the full standardize method (both names and units)."""
     ds = xr.Dataset({"potential": (["record"], [1.0]), "current/uA": (["record"], [1000.0])}, coords={"record": [0]})
 
-    standardizer = DataStandardizer(ds, techniques="echem")
+    standardizer = DataStandardizer(ds, techniques=["echem"])
     standardizer.standardize()
     std_ds = standardizer.get_dataset()
 

@@ -18,6 +18,7 @@ def test_list_supported_formats():
     assert ".xye" in formats
 
 
+@pytest.mark.requires_data
 @pytest.mark.skipif(not BIOLOGIC_MPT.exists(), reason="Example file not found")
 def test_load_biologic_mpt():
     data, info = load(BIOLOGIC_MPT)
@@ -28,6 +29,7 @@ def test_load_biologic_mpt():
     assert info.instrument == "BioLogic"
 
 
+@pytest.mark.requires_data
 @pytest.mark.skipif(not BIOLOGIC_GPCL.exists(), reason="Example file not found")
 def test_load_biologic_gpcl():
     """Test loading BioLogic GPCL file."""
@@ -37,6 +39,7 @@ def test_load_biologic_gpcl():
     assert info.instrument == "BioLogic"
 
 
+@pytest.mark.requires_data
 @pytest.mark.skipif(not LANHE_XLSX.exists(), reason="Example file not found")
 def test_load_lanhe_xlsx():
     # Lanhe might need openpyxl or similar
@@ -65,6 +68,7 @@ def test_load_unsupported_extension():
         dummy.unlink()
 
 
+@pytest.mark.requires_data
 def test_load_with_metadata_overrides():
     """Test load function with metadata override parameters."""
     if not BIOLOGIC_MPT.exists():
@@ -76,10 +80,11 @@ def test_load_with_metadata_overrides():
 
     assert info.sample_name == "CustomSample"
     assert info.operator == "TestUser"
-    # Instrument might be overridden by the reader, but technique should be set
-    assert "custom_tech" in info.technique or info.technique == ["custom_tech"]
+    # Technique should be converted to list format
+    assert info.technique == ["custom_tech"]
 
 
+@pytest.mark.requires_data
 def test_load_without_standardization():
     """Test loading without automatic standardization."""
     if not BIOLOGIC_MPT.exists():
@@ -90,6 +95,7 @@ def test_load_without_standardization():
     assert isinstance(info, RawDataInfo)
 
 
+@pytest.mark.requires_data
 def test_load_with_format_override():
     """Test load with explicit format parameter."""
     if not BIOLOGIC_MPT.exists():
