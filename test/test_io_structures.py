@@ -6,15 +6,15 @@ from echemistpy.io.structures import RawData, RawDataInfo, ResultsData, ResultsD
 
 
 def test_raw_data_info():
-    info = RawDataInfo(sample_name="TestSample", technique="echem", instrument="BioLogic")
+    info = RawDataInfo(sample_name="TestSample", technique=["echem"], instrument="BioLogic")
     assert info.sample_name == "TestSample"
-    assert info.technique == "echem"
+    assert info.technique == ["echem"]
     assert info.instrument == "BioLogic"
 
     # Test to_dict
     d = info.to_dict()
     assert d["sample_name"] == "TestSample"
-    assert d["technique"] == "echem"
+    assert d["technique"] == ["echem"]
 
     # Test get
     assert info.get("sample_name") == "TestSample"
@@ -23,7 +23,7 @@ def test_raw_data_info():
     # Test update
     info.update({"operator": "Alice", "custom_param": 123})
     assert info.operator == "Alice"
-    assert info.parameters["custom_param"] == 123
+    assert info.others["custom_param"] == 123
     assert info.get("custom_param") == 123
 
 
@@ -45,12 +45,14 @@ def test_raw_data():
 
 
 def test_results_data_info():
-    info = ResultsDataInfo(technique="echem", analysis_type="CV")
-    assert info.technique == "echem"
-    assert info.analysis_type == "CV"
+    info = ResultsDataInfo(technique=["echem"])
+    info.parameters = {"analysis_type": "CV"}  # analysis_type is in parameters
+    assert info.technique == ["echem"]
+    assert info.parameters["analysis_type"] == "CV"
 
     d = info.to_dict()
-    assert d["analysis_type"] == "CV"
+    assert "parameters" in d
+    assert d["parameters"]["analysis_type"] == "CV"
 
 
 def test_results_data():

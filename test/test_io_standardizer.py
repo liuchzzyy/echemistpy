@@ -24,8 +24,8 @@ def test_data_standardizer_units():
     standardizer.standardize_units()
     std_ds = standardizer.get_dataset()
 
-    assert "Current/mA" in std_ds.data_vars
-    assert std_ds["Current/mA"].values[0] == 1.0
+    assert "current/mA" in std_ds.data_vars  # lowercase after unit conversion
+    assert std_ds["current/mA"].values[0] == 1.0
     assert "time/s" in std_ds.data_vars
     assert std_ds["time/s"].values[0] == 60.0
     assert "potential/V" in std_ds.data_vars
@@ -38,7 +38,7 @@ def test_standardize_names_function():
     info = RawDataInfo(technique="echem")
 
     std_rd, std_info = standardize_names(rd, info)
-    assert "Ewe/V" in std_rd.data_vars
+    assert "Ewe/V" in std_rd.data.data_vars
     assert std_info.technique == ["echem"]
 
 

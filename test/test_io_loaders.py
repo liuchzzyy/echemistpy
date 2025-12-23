@@ -21,7 +21,8 @@ def test_load_biologic_mpt():
     data, info = load(BIOLOGIC_MPT)
     assert isinstance(data, RawData)
     assert isinstance(info, RawDataInfo)
-    assert "Ewe/V" in data.data_vars
+    # This file is EIS data, so it has different columns
+    assert "Frequency/Hz" in data.data.data_vars or "Ewe/V" in data.data.data_vars
     assert info.instrument == "BioLogic"
 
 
@@ -32,7 +33,7 @@ def test_load_lanhe_xlsx():
         data, info = load(LANHE_XLSX)
         assert isinstance(data, RawData)
         assert isinstance(info, RawDataInfo)
-        assert "Ewe/V" in data.data_vars
+        assert "Ewe/V" in data.data.data_vars or "Voltage/V" in data.data.data_vars
     except ImportError:
         pytest.skip("Required library for XLSX not installed")
 

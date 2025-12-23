@@ -23,7 +23,7 @@ def test_save_info(tmp_path):
     with open(path, "r", encoding="utf-8") as f:
         data = json.load(f)
     assert data["sample_name"] == "Test"
-    assert data["technique"] == "echem"
+    assert data["technique"] == ["echem"]  # technique is a list
 
 
 def test_save_data_csv(tmp_path):
