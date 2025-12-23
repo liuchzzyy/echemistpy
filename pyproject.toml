@@ -7,7 +7,7 @@ name = "echemistpy"
 version = "0.1.0"
 description = "Unified data processing for electrochemical techniques and materials characterization (XRD, XPS, TGA, XAS, TXM)"
 readme = "README.md"
-requires-python = ">=3.10,<3.12"
+requires-python = ">=3.10,<3.13"
 license = {text = "CeCILL-B Free Software License Agreement (CECILL-B)"}
 authors = [
   {name = "Cheng Liu", email = "liuchzzyy@gmail.com"},
