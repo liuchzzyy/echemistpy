@@ -127,7 +127,7 @@ logger-objects = ["app.logger", "logger"]
 
 [tool.pytest.ini_options]
 addopts = ["--doctest-modules", "-p no:warnings"]
-testpaths = ["tests"]
+testpaths = ["test"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
