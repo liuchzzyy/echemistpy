@@ -11,6 +11,7 @@ from typing import Any
 
 import openpyxl
 import openpyxl.worksheet.worksheet
+import pandas as pd
 import xarray as xr
 from traitlets import HasTraits, List, Unicode
 
@@ -64,6 +65,16 @@ class LanheXLSXReader(HasTraits):
 
         # Convert to xarray Dataset
         ds = xr.Dataset({k: (("record",), v) for k, v in cleaned_data.items()})
+
+        # Handle time coordinates
+        if "SysTime" in ds:
+            systimes = pd.to_datetime(ds["SysTime"].values)
+            ds = ds.assign_coords(systime=(("record",), systimes))
+            ds = ds.drop_vars("SysTime")
+            # Calculate relative time
+            rel_times = systimes - systimes[0]
+            ds = ds.assign_coords(time_s=(("record",), rel_times))
+            ds.time_s.attrs["units"] = "s"
 
         # Use Record or similar index as the coordinate for the 'record' dimension
         for index_col in ["Record", "record", "Row", "row", "Index", "index"]:

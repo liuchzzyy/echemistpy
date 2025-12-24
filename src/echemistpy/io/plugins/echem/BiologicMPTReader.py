@@ -866,12 +866,13 @@ class BiologicMPTReader(HasTraits):
 
         # 1. 提取原始列
         data_vars = {col: (["record"], mpt_array[col]) for col in ordered_cols if col in names}
+        coords = {"record": np.arange(1, n_records + 1)}
 
-        # 2. 添加计算列
+        # 2. 添加计算列和坐标
         if is_gpcl:
-            BiologicMPTReader._add_gpcl_columns(data_vars, mpt_array, names, metadata, active_material_mass)
+            BiologicMPTReader._add_gpcl_columns(data_vars, coords, mpt_array, names, metadata, active_material_mass)
         elif is_ocv:
-            BiologicMPTReader._add_ocv_columns(data_vars, mpt_array, names, metadata)
+            BiologicMPTReader._add_ocv_columns(data_vars, coords, mpt_array, names, metadata)
 
         # 3. 按照固定顺序重新构建 (仅保留存在的列)
         final_vars = {}
@@ -879,10 +880,10 @@ class BiologicMPTReader(HasTraits):
             if col in data_vars:
                 final_vars[col] = data_vars[col]
 
-        return xr.Dataset(final_vars, coords={"record": np.arange(1, n_records + 1)})
+        return xr.Dataset(final_vars, coords=coords)
 
     @staticmethod
-    def _add_gpcl_columns(data_vars: dict, mpt_array: np.ndarray, names: list[str], metadata: dict | None, mass: Any):
+    def _add_gpcl_columns(data_vars: dict, coords: dict, mpt_array: np.ndarray, names: list[str], metadata: dict | None, mass: Any):  # noqa: PLR0913, PLR0917
         """Add calculated columns for GPCL technique."""
         # voltage/V
         ewe, ece = (mpt_array[k] if k in names else None for k in ("Ewe/V", "Ece/V"))
@@ -893,11 +894,14 @@ class BiologicMPTReader(HasTraits):
         elif ece is not None:
             data_vars["voltage/V"] = (["record"], -ece)
 
-        # systime
+        # systime and time_s
         try:
             acq_start = metadata.get("file_info", {}).get("Acquisition started on", "") if metadata else ""
             if acq_start and "time/s" in names:
-                data_vars["systime"] = (["record"], _calculate_systime(acq_start, mpt_array["time/s"]))
+                systimes = _calculate_systime(acq_start, mpt_array["time/s"])
+                coords["systime"] = (["record"], systimes)
+                rel_times = systimes - systimes[0]
+                coords["time_s"] = (["record"], rel_times)
         except Exception as e:
             logger.debug("Failed to calculate systime: %s", e)
 
@@ -913,7 +917,7 @@ class BiologicMPTReader(HasTraits):
                 logger.debug("Failed to calculate SpeCap_cal/mAh/g: %s", e)
 
     @staticmethod
-    def _add_ocv_columns(data_vars: dict, mpt_array: np.ndarray, names: list[str], metadata: dict | None):
+    def _add_ocv_columns(data_vars: dict, coords: dict, mpt_array: np.ndarray, names: list[str], metadata: dict | None):
         """Add calculated columns for OCV technique."""
         n_records = len(mpt_array)
 
@@ -927,10 +931,13 @@ class BiologicMPTReader(HasTraits):
         # voltage/V
         data_vars["voltage/V"] = (["record"], ewe - ece)
 
-        # systime
+        # systime and time_s
         try:
             acq_start = metadata.get("file_info", {}).get("Acquisition started on", "") if metadata else ""
             if acq_start and "time/s" in names:
-                data_vars["systime"] = (["record"], _calculate_systime(acq_start, mpt_array["time/s"]))
+                systimes = _calculate_systime(acq_start, mpt_array["time/s"])
+                coords["systime"] = (["record"], systimes)
+                rel_times = systimes - systimes[0]
+                coords["time_s"] = (["record"], rel_times)
         except Exception as e:
             logger.debug("Failed to calculate systime: %s", e)

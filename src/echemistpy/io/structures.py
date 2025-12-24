@@ -68,7 +68,8 @@ class MetadataInfoMixin:
             if cast(HasTraits, self).has_trait(key):
                 setattr(self, key, value)
             elif container is not None and isinstance(container, dict):
-                container[key] = value
+                # Cast to dict to satisfy type checker
+                cast(dict, container)[key] = value
 
 
 class XarrayDataMixin:
@@ -89,7 +90,9 @@ class XarrayDataMixin:
         Returns:
             A new instance of the same class with copied data
         """
-        return self.__class__(data=self.data.copy(deep=deep))
+        # Use type(self) and cast to Any to avoid ty errors with constructor arguments
+        cls = cast(Any, type(self))
+        return cls(data=self.data.copy(deep=deep))
 
     def to_pandas(self) -> pd.DataFrame | pd.Series:
         """Convert data to pandas DataFrame or Series.
@@ -114,9 +117,7 @@ class XarrayDataMixin:
 
         if n_dims > 1:
             raise ValueError(
-                f"to_pandas() only works for data with 1 or fewer dimensions. "
-                f"This data has {n_dims} dimensions: {list(ds.dims.keys())}. "
-                f"Use self.data.to_dataframe() for multi-dimensional data."
+                f"to_pandas() only works for data with 1 or fewer dimensions. This data has {n_dims} dimensions: {list(ds.dims.keys())}. Use self.data.to_dataframe() for multi-dimensional data."
             )
 
         return ds.to_pandas()
@@ -157,31 +158,37 @@ class XarrayDataMixin:
         """Get list of all coordinate names in the dataset."""
         return self.coords
 
-    def select(self, variables: Optional[list[str]] = None) -> xr.Dataset:
+    def select(self, variables: Optional[list[str]] = None) -> xr.Dataset | xr.DataTree:
         """Select specific variables from the dataset.
 
         Args:
             variables: List of variable names to select, or None for all
 
         Returns:
-            xarray.Dataset with selected variables
+            xarray.Dataset or xarray.DataTree with selected variables
         """
         if variables is None:
             return self.data
-        # Ensure we return a Dataset even if one variable is selected
-        result = self.data[variables]
-        if isinstance(result, xr.DataArray):
-            return result.to_dataset()
-        return result
 
-    def __getitem__(self, key: str) -> xr.DataArray:
-        """Access a variable by name.
+        # Handle Dataset and DataTree separately to satisfy type checker
+        if isinstance(self.data, xr.Dataset):
+            result = self.data[variables]
+            if isinstance(result, xr.DataArray):
+                return result.to_dataset()
+            return result
+        else:
+            # For DataTree, indexing with list[str] selects nodes
+            # Cast to Any then to DataTree to satisfy type checker
+            return cast(xr.DataTree, cast(Any, self.data)[variables])
+
+    def __getitem__(self, key: str) -> xr.DataArray | xr.DataTree:
+        """Access a variable or node by name.
 
         Args:
-            key: Variable name
+            key: Variable or node name
 
         Returns:
-            xarray.DataArray for the variable
+            xarray.DataArray or xarray.DataTree
         """
         return self.data[key]
 

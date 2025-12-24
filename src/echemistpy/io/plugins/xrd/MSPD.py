@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+# ruff: noqa: N999
 """XRD Data Reader for MSPD .xye files with metadata extraction using traitlets."""
 
 import logging
@@ -124,10 +125,7 @@ class MSPDReader(HasTraits):
                 systimes = pd.to_datetime([info.start_time for info in infos])
 
                 # Calculate relative time (timedelta)
-                if not systimes.isnull().all():
-                    rel_times = systimes - systimes[0]
-                else:
-                    rel_times = pd.to_timedelta([None] * len(infos))
+                rel_times = systimes - systimes[0] if not systimes.isnull().all() else pd.to_timedelta([None] * len(infos))
 
                 # Add record, filenames, systime and time_s as coordinates
                 merged_ds = merged_ds.assign_coords(
@@ -146,7 +144,7 @@ class MSPDReader(HasTraits):
                     rel_path = parent.relative_to(path)
                     node_path = "/".join(rel_path.parts)
 
-                if node_path == "/" or node_path == "":
+                if node_path in {"/", ""}:
                     tree.dataset = merged_ds
                     node_info = self._merge_infos(infos, parent)
                     tree.attrs.update(node_info.to_dict())

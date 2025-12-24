@@ -39,7 +39,7 @@ if TYPE_CHECKING:
     pass
 
 
-def load(
+def load(  # noqa: PLR0913, PLR0917
     path: str | Path,
     fmt: Optional[str] = None,
     technique: Optional[str | list[str]] = None,
@@ -74,10 +74,22 @@ def load(
     ext = fmt if fmt else path.suffix.lower()
 
     pm = get_plugin_manager()
-    reader_class = pm.get_loader(ext)
+
+    # Check available instruments for this extension
+    available_instruments = pm.get_loader_instruments(ext)
+
+    if not available_instruments:
+        raise ValueError(f"No loader registered for extension: {ext}")
+
+    # If multiple loaders exist but no instrument is specified, prompt the user
+    if instrument is None and len(available_instruments) > 1:
+        raise ValueError(f"Multiple loaders available for extension '{ext}'. Please specify 'instrument' to choose one.\nAvailable instruments: {available_instruments}")
+
+    reader_class = pm.get_loader(ext, instrument=instrument)
 
     if reader_class is None:
-        raise ValueError(f"No loader registered for extension: {ext}")
+        # This happens if instrument was provided but didn't match any registered loader
+        raise ValueError(f"No loader found for extension '{ext}' with instrument '{instrument}'.\nAvailable instruments for this format: {available_instruments}")
 
     # Instantiate reader and load raw data
     # Pass standard metadata to reader if provided
@@ -145,15 +157,20 @@ def list_supported_formats() -> Dict[str, str]:
     loaders = pm.get_supported_loaders()
 
     formats = {}
-    for ext, plugin_name in loaders.items():
-        if "biologic" in plugin_name.lower():
+    for ext, plugin_names in loaders.items():
+        # plugin_names is a list of strings
+        is_biologic = any("biologic" in name.lower() for name in plugin_names)
+        is_lanhe = any("lanhe" in name.lower() for name in plugin_names)
+        is_mspd = any("mspd" in name.lower() for name in plugin_names)
+
+        if is_biologic:
             formats[ext] = "BioLogic EC-Lab files (.mpt)"
-        elif "lanhe" in plugin_name.lower():
+        elif is_lanhe:
             formats[ext] = "LANHE battery test files (.xlsx)"
-        elif "mspd" in plugin_name.lower():
+        elif is_mspd:
             formats[ext] = "MSPD XRD files (.xye)"
         else:
-            formats[ext] = f"Loaded by {plugin_name}"
+            formats[ext] = f"Loaded by {', '.join(plugin_names)}"
 
     return formats
 

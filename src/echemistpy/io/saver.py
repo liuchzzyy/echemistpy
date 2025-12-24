@@ -16,10 +16,6 @@ import xarray as xr
 from echemistpy.io.structures import (
     BaseData,
     BaseInfo,
-    RawData,
-    RawDataInfo,
-    ResultsData,
-    ResultsDataInfo,
 )
 
 
