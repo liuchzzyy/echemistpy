@@ -84,6 +84,15 @@ ruff check src/ tests/  # 静态分析
 ruff format src/ tests/  # 代码格式化
 ```
 
+### Git 提交规范
+
+- **语言**: 所有 Git commit 消息必须使用 **中文** 表达。
+- **格式**: 遵循约定式提交 (Conventional Commits) 规范，例如：
+  - `feat: 新增 OCV 技术支持`
+  - `fix: 修复 MPT 元数据解析错误`
+  - `docs: 更新分析器文档`
+  - `refactor: 重构数据清洗逻辑`
+
 ## 扩展点和集成
 
 ### 添加新技术支持

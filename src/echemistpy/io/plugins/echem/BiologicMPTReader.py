@@ -598,6 +598,7 @@ class BiologicMPTReader(HasTraits):
         names = mpt_array.dtype.names or []
         is_peis = "Electrochemical Impedance" in tech_str or "PEIS" in tech_str
         is_gpcl = "Galvanostatic Cycling" in tech_str or "GPCL" in tech_str
+        is_ocv = "Open Circuit Voltage" in tech_str or "OCV" in tech_str
         if not is_peis and "freq/Hz" in names:
             is_peis = True
 
@@ -606,6 +607,8 @@ class BiologicMPTReader(HasTraits):
             tech_list.append("peis")
         if is_gpcl:
             tech_list.append("gpcl")
+        if is_ocv:
+            tech_list.append("ocv")
         return tech_list
 
     @staticmethod
@@ -655,7 +658,7 @@ class BiologicMPTReader(HasTraits):
             kv = split_kv(content)
             if kv:
                 add_val(state["current_section"], *kv)
-        elif "technique" not in meta and any(kw in content.lower() for kw in ["electrochemical", "impedance", "spectroscopy", "potentio", "galvano"]):
+        elif "technique" not in meta and any(kw in content.lower() for kw in ["electrochemical", "impedance", "spectroscopy", "potentio", "galvano", "open circuit", "ocv"]):
             meta["technique"] = content
         elif content.startswith("Cycle Definition"):
             state["in_parameters"] = True
@@ -743,6 +746,7 @@ class BiologicMPTReader(HasTraits):
         technique = metadata.get("file_info", {}).get("technique", "") if metadata else ""
         is_peis = "Electrochemical Impedance" in technique or "PEIS" in technique
         is_gpcl = "Galvanostatic Cycling" in technique or "GPCL" in technique
+        is_ocv = "Open Circuit Voltage" in technique or "OCV" in technique
         if not is_peis and "freq/Hz" in names:
             is_peis = True
 
@@ -761,6 +765,15 @@ class BiologicMPTReader(HasTraits):
                 "Capacity/mA.h",
                 "SpeCap_cal/mAh/g",
             ]
+        elif is_ocv:
+            ordered_cols = [
+                "time/s",
+                "systime",
+                "cycle number",
+                "Ewe/V",
+                "Ece/V",
+                "voltage/V",
+            ]
         else:
             ordered_cols = list(names)
 
@@ -770,6 +783,8 @@ class BiologicMPTReader(HasTraits):
         # 2. 添加计算列
         if is_gpcl:
             BiologicMPTReader._add_gpcl_columns(data_vars, mpt_array, names, metadata, active_material_mass)
+        elif is_ocv:
+            BiologicMPTReader._add_ocv_columns(data_vars, mpt_array, names, metadata)
 
         # 3. 按照固定顺序重新构建 (仅保留存在的列)
         final_vars = {}
@@ -809,3 +824,26 @@ class BiologicMPTReader(HasTraits):
                     data_vars["SpeCap_cal/mAh/g"] = (["record"], mpt_array["Capacity/mA.h"] / m_g)
             except (ValueError, TypeError, ZeroDivisionError) as e:
                 logger.debug("Failed to calculate SpeCap_cal/mAh/g: %s", e)
+
+    @staticmethod
+    def _add_ocv_columns(data_vars: dict, mpt_array: np.ndarray, names: list[str], metadata: dict | None):
+        """Add calculated columns for OCV technique."""
+        n_records = len(mpt_array)
+
+        # Ensure Ewe/V and Ece/V exist
+        ewe = mpt_array["Ewe/V"] if "Ewe/V" in names else np.zeros(n_records)
+        ece = mpt_array["Ece/V"] if "Ece/V" in names else np.zeros(n_records)
+
+        data_vars["Ewe/V"] = (["record"], ewe)
+        data_vars["Ece/V"] = (["record"], ece)
+
+        # voltage/V
+        data_vars["voltage/V"] = (["record"], ewe - ece)
+
+        # systime
+        try:
+            acq_start = metadata.get("file_info", {}).get("Acquisition started on", "") if metadata else ""
+            if acq_start and "time/s" in names:
+                data_vars["systime"] = (["record"], _calculate_systime(acq_start, mpt_array["time/s"]))
+        except Exception as e:
+            logger.debug("Failed to calculate systime: %s", e)
