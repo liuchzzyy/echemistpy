@@ -105,8 +105,15 @@ class DataStandardizer(HasTraits):
             "capacity_mah": "Capacity/mAh",
             "capacity/uAh": "Capacity/uAh",
             "capacity/mAh": "Capacity/mAh",
+            "capacity/mA.h": "Capacity/mAh",
+            "Capacity/mA.h": "Capacity/mAh",
+            "capacity/uA.h": "Capacity/uAh",
+            "Capacity/uA.h": "Capacity/uAh",
             "SpeCap/mAh/g": "Specific_Capacity/mAh/g",
             "SpeCap_cal/mAh/g": "Specific_Capacity_cal/mAh/g",
+            "SpeCap_cal/mA.h/g": "Specific_Capacity_cal/mAh/g",
+            "Capacity_mA.h": "Capacity/mAh",
+            "SpeCap_cal_mAh_g": "Specific_Capacity_cal/mAh/g",
             # EIS variants
             "freq/Hz": "Frequency/Hz",
             "frequency": "Frequency/Hz",
@@ -191,7 +198,19 @@ class DataStandardizer(HasTraits):
         for tech in self.techniques:
             # Map specific techniques to general categories if needed
             tech_category = tech
-            if tech in {"cv", "gcd", "eis", "ca", "cp", "lsjv", "echem", "ec", "peis", "gpcl"}:
+            if tech in {
+                "cv",
+                "gcd",
+                "eis",
+                "ca",
+                "cp",
+                "lsjv",
+                "echem",
+                "ec",
+                "peis",
+                "gpcl",
+                "ocv",
+            }:
                 tech_category = "echem"
 
             # 1. Apply general technique mapping
@@ -318,28 +337,56 @@ def standardize_names(
     """
     # Extract dataset from RawData
     if isinstance(raw_data.data, xr.Dataset):
-        dataset = raw_data.data
+        # Determine techniques
+        techniques = technique_hint or raw_data_info.get("technique") or ["unknown"]
+        if isinstance(techniques, str):
+            techniques = [techniques]
+
+        # Standardize data
+        standardizer = DataStandardizer(dataset=raw_data.data, techniques=techniques, instrument=raw_data_info.instrument)
+        standardizer.standardize(custom_mapping)
+
+        if required_columns:
+            standardizer.ensure_required_columns(required_columns)
+
+        standardized_data = RawData(data=standardizer.get_dataset())
+    elif isinstance(raw_data.data, xr.DataTree):
+        # Determine global techniques
+        global_techniques = technique_hint or raw_data_info.get("technique") or ["unknown"]
+        if isinstance(global_techniques, str):
+            global_techniques = [global_techniques]
+
+        def _standardize_node(ds: xr.Dataset) -> xr.Dataset:
+            if not ds.data_vars:
+                return ds
+
+            # Use node-specific techniques if available, otherwise use global
+            node_techniques = ds.attrs.get("technique", global_techniques)
+            if isinstance(node_techniques, str):
+                node_techniques = [node_techniques]
+
+            s = DataStandardizer(dataset=ds, techniques=node_techniques, instrument=raw_data_info.instrument)
+            s.standardize(custom_mapping)
+            if required_columns:
+                s.ensure_required_columns(required_columns)
+
+            standardized_ds = s.get_dataset()
+            # Sanitize names for DataTree compatibility (no '/' allowed)
+            rename_dict = {str(var): str(var).replace("/", "_") for var in standardized_ds.data_vars if "/" in str(var)}
+            if rename_dict:
+                standardized_ds = standardized_ds.rename(rename_dict)
+
+            return standardized_ds
+
+        standardized_tree = raw_data.data.map_over_datasets(_standardize_node)
+        standardized_data = RawData(data=standardized_tree)
+        techniques = global_techniques
     else:
-        raise ValueError("RawData must contain an xarray.Dataset for standardization")
+        raise ValueError("RawData must contain an xarray.Dataset or DataTree for standardization")
 
-    # Determine techniques
-    techniques = technique_hint or raw_data_info.get("technique") or ["unknown"]
-    if isinstance(techniques, str):
-        techniques = [techniques]
-
-    # Standardize data
-    standardizer = DataStandardizer(dataset, techniques, instrument=raw_data_info.instrument)
-    standardizer.standardize(custom_mapping)
-
-    if required_columns:
-        standardizer.ensure_required_columns(required_columns)
-
-    standardized_dataset = standardizer.get_dataset()
-
-    # Create standardized info and data
+    # Create standardized info
     info = raw_data_info.copy()
     info.technique = techniques
-    standardized_data = RawData(data=standardized_dataset)
 
     return standardized_data, info
 

@@ -6,7 +6,7 @@ from typing import Any, Optional, cast
 
 import pandas as pd
 import xarray as xr
-from traitlets import Dict, HasTraits, Instance, List, Unicode
+from traitlets import Dict, HasTraits, Instance, List, Unicode, Union
 
 
 class MetadataInfoMixin:
@@ -223,7 +223,7 @@ class BaseInfo(HasTraits, MetadataInfoMixin):
 class BaseData(HasTraits, XarrayDataMixin):
     """Base class for all xarray-based data containers."""
 
-    data = Instance(xr.Dataset, help="xarray.Dataset containing the data")
+    data = Union([Instance(xr.Dataset), Instance(xr.DataTree)], help="xarray.Dataset or xarray.DataTree containing the data")
 
 
 class RawDataInfo(BaseInfo):

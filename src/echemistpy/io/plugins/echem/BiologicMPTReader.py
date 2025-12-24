@@ -16,7 +16,7 @@ from collections import OrderedDict, defaultdict
 from datetime import date, datetime
 from os import SEEK_SET
 from pathlib import Path
-from typing import Any, ClassVar
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -164,7 +164,7 @@ def _calculate_systime(acq_start: str, relative_times: np.ndarray) -> pd.Series:
         # BioLogic format: MM/DD/YYYY HH:MM:SS.ffffff
         start_dt = datetime.strptime(acq_start, "%m/%d/%Y %H:%M:%S.%f")
         start_ts = start_dt.timestamp()
-        return pd.to_datetime(start_ts + relative_times, unit="s")
+        return pd.Series(pd.to_datetime(start_ts + relative_times, unit="s"))
     except Exception as e:
         logger.debug("Failed to parse acquisition start time '%s': %s", acq_start, e)
         # Fallback to just relative times if parsing fails
@@ -547,7 +547,7 @@ class BiologicMPTReader(HasTraits):
             self.filepath = str(filepath)
 
     def load(self) -> tuple[RawData, RawDataInfo]:
-        """Load BioLogic MPT file and return RawData and RawDataInfo."""
+        """Load BioLogic MPT file(s) and return RawData and RawDataInfo."""
         if not self.filepath:
             raise ValueError("filepath not set")
 
@@ -555,6 +555,15 @@ class BiologicMPTReader(HasTraits):
         if not path.exists():
             raise FileNotFoundError(f"File not found: {path}")
 
+        if path.is_file():
+            return self._load_single_file(path)
+        elif path.is_dir():
+            return self._load_directory(path)
+        else:
+            raise ValueError(f"Path is neither a file nor a directory: {path}")
+
+    def _load_single_file(self, path: Path) -> tuple[RawData, RawDataInfo]:
+        """Internal method to load a single BioLogic MPT file."""
         # Read raw data and metadata
         mpt_array, comments = mpt_file(path)
 
@@ -563,7 +572,7 @@ class BiologicMPTReader(HasTraits):
         metadata = {
             "file_info": file_info,
             "file_type": "MPT",
-            "file_path": str(self.filepath),
+            "file_path": str(path),
         }
         cleaned_metadata = self._clean_metadata(metadata)
 
@@ -591,6 +600,84 @@ class BiologicMPTReader(HasTraits):
         )
 
         return raw_data, raw_info
+
+    def _load_directory(self, path: Path) -> tuple[RawData, RawDataInfo]:
+        """Load all BioLogic MPT files in a directory and its subdirectories into a DataTree."""
+        mpt_files = sorted(path.rglob("*.mpt"))
+        if not mpt_files:
+            raise FileNotFoundError(f"No .mpt files found in {path}")
+
+        # Create a root DataTree
+        tree = xr.DataTree(name=path.name)
+        infos = []
+
+        for f in mpt_files:
+            try:
+                raw_data, raw_info = self._load_single_file(f)
+                ds = raw_data.data
+
+                # Sanitize variable names for DataTree (replace / with _)
+                # DataTree does not allow / in variable names as it's a path separator
+                rename_dict = {str(var): str(var).replace("/", "_") for var in ds.data_vars if "/" in str(var)}
+                if rename_dict:
+                    ds = ds.rename(rename_dict)
+
+                # Determine relative path for the tree
+                rel_path = f.relative_to(path)
+
+                # Build the path string for DataTree (using / as separator)
+                # We use the filename (without extension) as the leaf node name
+                node_path = "/".join(rel_path.with_suffix("").parts)
+
+                # Add to tree
+                tree[node_path] = ds
+
+                # Store metadata in node attributes
+                tree[node_path].attrs.update(raw_info.to_dict())
+
+                infos.append(raw_info)
+            except Exception as e:
+                logger.warning("Failed to load %s: %s", f, e)
+
+        if not tree.children and not tree.has_data:
+            raise RuntimeError(f"Failed to load any .mpt files from {path}")
+
+        # Merge RawDataInfo for the root
+        merged_info = self._merge_infos(infos, path)
+
+        return RawData(data=tree), merged_info
+
+    def _merge_infos(self, infos: list[RawDataInfo], root_path: Path) -> RawDataInfo:
+        """Merge multiple RawDataInfo objects into one."""
+        if not infos:
+            return RawDataInfo()
+
+        # Use the first one as base
+        base = infos[0]
+
+        # Collect all techniques
+        all_techs = set()
+        for info in infos:
+            for t in info.technique:
+                all_techs.add(t)
+
+        # Create merged info
+        merged_info = RawDataInfo(
+            sample_name=self.sample_name or root_path.name,
+            start_time=self.start_time or base.start_time,
+            operator=self.operator or base.operator,
+            technique=list(all_techs),
+            instrument=self.instrument or base.instrument,
+            active_material_mass=self.active_material_mass or base.active_material_mass,
+            wave_number=self.wave_number or base.wave_number,
+            others={
+                "merged_files": [str(info.get("file_path")) for info in infos if info.get("file_path")],
+                "n_files": len(infos),
+                "structure": "DataTree",
+            },
+        )
+
+        return merged_info
 
     def _detect_techniques(self, cleaned_metadata: dict, mpt_array: np.ndarray) -> list[str]:
         """Detect specific electrochemical techniques from metadata and data."""
@@ -741,7 +828,7 @@ class BiologicMPTReader(HasTraits):
     def _clean_data(mpt_array: np.ndarray, metadata: dict[str, Any] | None = None, active_material_mass: Any = None) -> xr.Dataset:
         """Clean data to filter specific columns and add calculated ones."""
         n_records = len(mpt_array)
-        names = mpt_array.dtype.names or []
+        names = list(mpt_array.dtype.names or [])
 
         technique = metadata.get("file_info", {}).get("technique", "") if metadata else ""
         is_peis = "Electrochemical Impedance" in technique or "PEIS" in technique
