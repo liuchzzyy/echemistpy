@@ -1,4 +1,4 @@
-from echemistpy.io.plugins.echem.LanheXLSXReader import LanheXLSXReader
 from echemistpy.io.plugins.echem.BiologicMPTReader import BiologicMPTReader
+from echemistpy.io.plugins.echem.LanheXLSXReader import LanheXLSXReader
 
-__all__ = ["LanheXLSXReader", "BiologicMPTReader"]
+__all__ = ["BiologicMPTReader", "LanheXLSXReader"]

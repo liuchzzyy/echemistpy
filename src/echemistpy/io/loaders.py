@@ -31,9 +31,9 @@ except ImportError:
     LanheXLSXReader = None  # type: ignore
 
 try:
-    from echemistpy.io.plugins.xrd.NOTOs import NOTOsReader
+    from echemistpy.io.plugins.xrd.MSPD import MSPDReader
 except ImportError:
-    NOTOsReader = None  # type: ignore
+    MSPDReader = None  # type: ignore
 
 if TYPE_CHECKING:
     pass
@@ -150,8 +150,8 @@ def list_supported_formats() -> Dict[str, str]:
             formats[ext] = "BioLogic EC-Lab files (.mpt)"
         elif "lanhe" in plugin_name.lower():
             formats[ext] = "LANHE battery test files (.xlsx)"
-        elif "notos" in plugin_name.lower():
-            formats[ext] = "NOTOs XRD files (.xye)"
+        elif "mspd" in plugin_name.lower():
+            formats[ext] = "MSPD XRD files (.xye)"
         else:
             formats[ext] = f"Loaded by {plugin_name}"
 
@@ -176,8 +176,8 @@ def _initialize_default_plugins() -> None:
     if LanheXLSXReader is not None:
         pm.register_loader([".xlsx"], LanheXLSXReader)
 
-    if NOTOsReader is not None:
-        pm.register_loader([".xye"], NOTOsReader)
+    if MSPDReader is not None:
+        pm.register_loader([".xye"], MSPDReader)
 
     pm.initialized = True
 

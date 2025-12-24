@@ -7,7 +7,7 @@
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import Any, ClassVar
+from typing import Any
 
 import openpyxl
 import openpyxl.worksheet.worksheet
@@ -37,7 +37,7 @@ class LanheXLSXReader(HasTraits):
             self.filepath = str(filepath)
 
     def load(self) -> tuple[RawData, RawDataInfo]:
-        """Load LANHE XLSX file and return RawData and RawDataInfo."""
+        """Load LANHE XLSX file(s) and return RawData and RawDataInfo."""
         if not self.filepath:
             raise ValueError("filepath not set")
 
@@ -45,8 +45,17 @@ class LanheXLSXReader(HasTraits):
         if not path.exists():
             raise FileNotFoundError(f"File not found: {path}")
 
+        if path.is_file():
+            return self._load_single_file(path)
+        elif path.is_dir():
+            return self._load_directory(path)
+        else:
+            raise ValueError(f"Path is neither a file nor a directory: {path}")
+
+    def _load_single_file(self, path: Path) -> tuple[RawData, RawDataInfo]:
+        """Internal method to load a single LANHE XLSX file."""
         # Read raw data and metadata
-        metadata, data_dict = self._read_xlsx()
+        metadata, data_dict = self._read_xlsx(path)
 
         # Clean metadata and data
         cleaned_metadata = self._clean_metadata(metadata)
@@ -70,7 +79,7 @@ class LanheXLSXReader(HasTraits):
         if isinstance(start_time_val, datetime):
             start_time_val = start_time_val.strftime("%Y-%m-%d %H:%M:%S")
 
-        tech_list = self.technique if self.technique != ["echem"] else list(self.technique) + ["gcd"]
+        tech_list = self.technique if self.technique != ["echem"] else [*list(self.technique), "gcd"]
 
         raw_info = RawDataInfo(
             sample_name=self.sample_name or str(cleaned_metadata.get("test_name", "Unknown")),
@@ -80,18 +89,94 @@ class LanheXLSXReader(HasTraits):
             instrument=self.instrument,
             active_material_mass=mass,
             wave_number=self.wave_number,
-            others=cleaned_metadata,
+            others={**cleaned_metadata, "file_path": str(path)},
         )
 
         return raw_data, raw_info
 
-    def _read_xlsx(self) -> tuple[dict[str, Any], dict[str, Any]]:
+    def _load_directory(self, path: Path) -> tuple[RawData, RawDataInfo]:
+        """Load all LANHE XLSX files in a directory and its subdirectories into a DataTree."""
+        xlsx_files = sorted(path.rglob("*.xlsx"))
+        if not xlsx_files:
+            raise FileNotFoundError(f"No .xlsx files found in {path}")
+
+        # Create a root DataTree
+        tree = xr.DataTree(name=path.name)
+        infos = []
+
+        for f in xlsx_files:
+            try:
+                raw_data, raw_info = self._load_single_file(f)
+                ds = raw_data.data
+
+                # Sanitize variable names for DataTree (replace / with _)
+                rename_dict = {str(var): str(var).replace("/", "_") for var in ds.data_vars if "/" in str(var)}
+                if rename_dict:
+                    ds = ds.rename(rename_dict)
+
+                # Determine relative path for the tree
+                rel_path = f.relative_to(path)
+
+                # Build the path string for DataTree (using / as separator)
+                node_path = "/".join(rel_path.with_suffix("").parts)
+
+                # Add to tree
+                tree[node_path] = ds
+
+                # Store metadata in node attributes
+                tree[node_path].attrs.update(raw_info.to_dict())
+
+                infos.append(raw_info)
+            except Exception as e:
+                logger.warning("Failed to load %s: %s", f, e)
+
+        if not tree.children and not tree.has_data:
+            raise RuntimeError(f"Failed to load any .xlsx files from {path}")
+
+        # Merge RawDataInfo for the root
+        merged_info = self._merge_infos(infos, path)
+
+        return RawData(data=tree), merged_info
+
+    def _merge_infos(self, infos: list[RawDataInfo], root_path: Path) -> RawDataInfo:
+        """Merge multiple RawDataInfo objects into one."""
+        if not infos:
+            return RawDataInfo()
+
+        # Use the first one as base
+        base = infos[0]
+
+        # Collect all techniques
+        all_techs = set()
+        for info in infos:
+            for t in info.technique:
+                all_techs.add(t)
+
+        # Create merged info
+        merged_info = RawDataInfo(
+            sample_name=self.sample_name or root_path.name,
+            start_time=self.start_time or base.start_time,
+            operator=self.operator or base.operator,
+            technique=list(all_techs),
+            instrument=self.instrument or base.instrument,
+            active_material_mass=self.active_material_mass or base.active_material_mass,
+            wave_number=self.wave_number or base.wave_number,
+            others={
+                "merged_files": [str(info.get("file_path")) for info in infos if info.get("file_path")],
+                "n_files": len(infos),
+                "structure": "DataTree",
+            },
+        )
+
+        return merged_info
+
+    def _read_xlsx(self, filepath: Path) -> tuple[dict[str, Any], dict[str, Any]]:
         """Read metadata and data from LANHE .xlsx file."""
         metadata: dict[str, Any] = {}
         data_dict: dict[str, Any] = {}
         data_sheet_name: str | None = None
 
-        wb = openpyxl.load_workbook(self.filepath, read_only=True, data_only=True)
+        wb = openpyxl.load_workbook(filepath, read_only=True, data_only=True)
         try:
             self._read_test_info(wb, metadata)
             self._read_proc_info(wb, metadata)

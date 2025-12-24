@@ -72,19 +72,19 @@ class MetadataInfoMixin:
 
 
 class XarrayDataMixin:
-    """Mixin providing common xarray.Dataset operations.
+    """Mixin providing common xarray.Dataset and xarray.DataTree operations.
 
     This mixin eliminates code duplication across RawData and ResultsData
-    classes by providing shared functionality.
+    classes by providing shared functionality for both Dataset and DataTree backends.
     """
 
-    data: xr.Dataset  # Type hint for IDE support
+    data: xr.Dataset | xr.DataTree  # Type hint for IDE support
 
     def copy(self, deep: bool = True) -> Any:
         """Create a copy of the data object.
 
         Args:
-            deep: Whether to perform a deep copy of the underlying dataset
+            deep: Whether to perform a deep copy of the underlying data
 
         Returns:
             A new instance of the same class with copied data
@@ -92,51 +92,62 @@ class XarrayDataMixin:
         return self.__class__(data=self.data.copy(deep=deep))
 
     def to_pandas(self) -> pd.DataFrame | pd.Series:
-        """Convert xarray.Dataset to pandas DataFrame or Series.
+        """Convert data to pandas DataFrame or Series.
 
-        This method wraps xarray's to_pandas() which only works for Datasets
-        with 1 or fewer dimensions. For multi-dimensional data, use to_dataframe().
+        For Datasets, this wraps xarray's to_pandas().
+        For DataTrees, this returns the pandas representation of the root dataset.
 
         Returns:
-            pandas.DataFrame for 1D data, pandas.Series for 0D data
+            pandas.DataFrame or pandas.Series
 
         Raises:
-            ValueError: If the Dataset has more than 1 dimension
-
-        Note:
-            - 0-dimensional Dataset → pandas.Series
-            - 1-dimensional Dataset → pandas.DataFrame
-            - For 2D+ data, use self.data.to_dataframe() instead
+            ValueError: If the data has more than 1 dimension or is a DataTree without root data
         """
+        ds = self.data
+        if isinstance(ds, xr.DataTree):
+            if ds.dataset is None:
+                raise ValueError("DataTree has no root dataset to convert to pandas.")
+            ds = ds.dataset
+
         # Check number of dimensions
-        n_dims = len(self.data.dims)
+        n_dims = len(ds.dims)
 
         if n_dims > 1:
             raise ValueError(
-                f"to_pandas() only works for Datasets with 1 or fewer dimensions. "
-                f"This Dataset has {n_dims} dimensions: {list(self.data.dims.keys())}. "
+                f"to_pandas() only works for data with 1 or fewer dimensions. "
+                f"This data has {n_dims} dimensions: {list(ds.dims.keys())}. "
                 f"Use self.data.to_dataframe() for multi-dimensional data."
             )
 
-        return self.data.to_pandas()
+        return ds.to_pandas()
 
     @property
     def variables(self) -> list[str]:
-        """Get list of all variable names.
+        """Get list of all variable names in the root dataset.
 
         Returns:
             List of variable names
         """
-        return [str(k) for k in self.data.data_vars]
+        ds = self.data
+        if isinstance(ds, xr.DataTree):
+            if ds.dataset is None:
+                return []
+            ds = ds.dataset
+        return [str(k) for k in ds.data_vars]
 
     @property
     def coords(self) -> list[str]:
-        """Get list of all coordinate names.
+        """Get list of all coordinate names in the root dataset.
 
         Returns:
             List of coordinate names
         """
-        return [str(k) for k in self.data.coords]
+        ds = self.data
+        if isinstance(ds, xr.DataTree):
+            if ds.dataset is None:
+                return []
+            ds = ds.dataset
+        return [str(k) for k in ds.coords]
 
     def get_variables(self) -> list[str]:
         """Get list of all variable names in the dataset."""
@@ -237,10 +248,11 @@ class RawDataInfo(BaseInfo):
 
 
 class RawData(BaseData):
-    """Container for measurement data using xarray.Dataset.
+    """Container for measurement data using xarray.Dataset or xarray.DataTree.
 
     This represents the data loaded from a file, standardized with consistent
-    column names and units.
+    column names and units. For hierarchical data (e.g., multiple scans or
+    subfolders), an xarray.DataTree is used.
     """
 
     pass
@@ -262,7 +274,7 @@ class ResultsDataInfo(BaseInfo):
 
 
 class ResultsData(BaseData):
-    """Container for processed results data using xarray.Dataset.
+    """Container for processed results data using xarray.Dataset or xarray.DataTree.
 
     This represents data after analysis and processing, such as fitted parameters,
     derived metrics, or processed signals. The xarray backend provides powerful
