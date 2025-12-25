@@ -273,6 +273,127 @@ class CLAESSReader(HasTraits):
             dt = xr.DataTree.from_dict(datasets, name=name)
             return dt
 
+    def _auto_detect_edges_from_folders(self, files: list[Path], root_path: Path) -> list[str] | None:
+        """从文件的上一级文件夹名称中自动检测 edges。
+
+        Args:
+            files: 相关的 .dat 文件列表
+            root_path: 根目录路径
+
+        Returns:
+            检测到的 edge 列表（按长度降序排列）或 None
+        """
+        # 元素周期表
+        elements = [
+            "H",
+            "He",
+            "Li",
+            "Be",
+            "B",
+            "C",
+            "N",
+            "O",
+            "F",
+            "Ne",
+            "Na",
+            "Mg",
+            "Al",
+            "Si",
+            "P",
+            "S",
+            "Cl",
+            "Ar",
+            "K",
+            "Ca",
+            "Sc",
+            "Ti",
+            "V",
+            "Cr",
+            "Mn",
+            "Fe",
+            "Co",
+            "Ni",
+            "Cu",
+            "Zn",
+            "Ga",
+            "Ge",
+            "As",
+            "Se",
+            "Br",
+            "Kr",
+            "Rb",
+            "Sr",
+            "Y",
+            "Zr",
+            "Nb",
+            "Mo",
+            "Tc",
+            "Ru",
+            "Rh",
+            "Pd",
+            "Ag",
+            "Cd",
+            "In",
+            "Sn",
+            "Sb",
+            "Te",
+            "I",
+            "Xe",
+            "Cs",
+            "Ba",
+            "La",
+            "Ce",
+            "Pr",
+            "Nd",
+            "Pm",
+            "Sm",
+            "Eu",
+            "Gd",
+            "Tb",
+            "Dy",
+            "Ho",
+            "Er",
+            "Tm",
+            "Yb",
+            "Lu",
+            "Hf",
+            "Ta",
+            "W",
+            "Re",
+            "Os",
+            "Ir",
+            "Pt",
+            "Au",
+            "Hg",
+            "Tl",
+            "Pb",
+            "Bi",
+            "Po",
+            "At",
+            "Rn",
+        ]
+
+        detected = set()
+        for f in files:
+            # 获取文件的上一级文件夹名（相对于根路径）
+            folder_name = f.parent.name
+
+            # 在文件夹名中查找元素符号
+            for el in elements:
+                # 匹配模式：
+                # 1. 在开头或前面是非字母数字字符
+                # 2. 后面是大写字母（如 MnFoil）或非字母数字字符或结尾
+                # 这样可以避免误匹配，如 'P1' 中的 'P' 或 'C1' 中的 'C'
+                pattern = rf"(^|[^a-zA-Z0-9]){el}([A-Z]|[^a-zA-Z0-9]|$)"
+                if re.search(pattern, folder_name):
+                    detected.add(el)
+
+        if detected:
+            # 按长度降序排列，以便优先匹配较长的符号（如 Mn 优先于 N）
+            return sorted(list(detected), key=lambda x: (-len(x), x))
+
+        return None
+
     def _load_directory(self, path: Path, edges: list[str] | None = None) -> tuple[RawData, RawDataInfo]:
         """Load all relevant files in a directory."""
         # Find all .dat files
@@ -285,112 +406,11 @@ class CLAESSReader(HasTraits):
         if not relevant_files:
             raise FileNotFoundError(f"No relevant .dat files found in {path}")
 
-        # Auto-detect edges if not provided
+        # Auto-detect edges if not provided (从文件的上一级文件夹名称中提取)
         if edges is None:
-            elements = [
-                "H",
-                "He",
-                "Li",
-                "Be",
-                "B",
-                "C",
-                "N",
-                "O",
-                "F",
-                "Ne",
-                "Na",
-                "Mg",
-                "Al",
-                "Si",
-                "P",
-                "S",
-                "Cl",
-                "Ar",
-                "K",
-                "Ca",
-                "Sc",
-                "Ti",
-                "V",
-                "Cr",
-                "Mn",
-                "Fe",
-                "Co",
-                "Ni",
-                "Cu",
-                "Zn",
-                "Ga",
-                "Ge",
-                "As",
-                "Se",
-                "Br",
-                "Kr",
-                "Rb",
-                "Sr",
-                "Y",
-                "Zr",
-                "Nb",
-                "Mo",
-                "Tc",
-                "Ru",
-                "Rh",
-                "Pd",
-                "Ag",
-                "Cd",
-                "In",
-                "Sn",
-                "Sb",
-                "Te",
-                "I",
-                "Xe",
-                "Cs",
-                "Ba",
-                "La",
-                "Ce",
-                "Pr",
-                "Nd",
-                "Pm",
-                "Sm",
-                "Eu",
-                "Gd",
-                "Tb",
-                "Dy",
-                "Ho",
-                "Er",
-                "Tm",
-                "Yb",
-                "Lu",
-                "Hf",
-                "Ta",
-                "W",
-                "Re",
-                "Os",
-                "Ir",
-                "Pt",
-                "Au",
-                "Hg",
-                "Tl",
-                "Pb",
-                "Bi",
-                "Po",
-                "At",
-                "Rn",
-            ]
-            detected = set()
-            for f in relevant_files:
-                # Check both filename and parent directory name
-                for name in [f.stem, f.parent.name]:
-                    for el in elements:
-                        # Match element symbol:
-                        # 1. Surrounded by non-letters/non-digits or at start/end
-                        # 2. Or followed by an uppercase letter (CamelCase like MnFoil)
-                        # This avoids matching 'P' in 'P1' or 'C' in 'C1'
-                        pattern = rf"(^|[^a-zA-Z0-9]){el}([A-Z]|[^a-zA-Z0-9]|$)"
-                        if re.search(pattern, name):
-                            detected.add(el)
-            if detected:
-                # Sort by length descending to match longer symbols first (e.g. Mn before N)
-                edges = sorted(list(detected), key=lambda x: (-len(x), x))
-                logger.info("Auto-detected edges from filenames: %s", edges)
+            edges = self._auto_detect_edges_from_folders(relevant_files, path)
+            if edges:
+                logger.info("Auto-detected edges from folder names: %s", edges)
 
         tree = xr.DataTree(name=path.name)
         all_infos = []
@@ -402,27 +422,14 @@ class CLAESSReader(HasTraits):
                 rel_parent = f.parent.relative_to(path)
                 matched_edge = None
 
-                # 1. Try to find edge in filename first (more specific)
-                # If multiple edges match, pick the one that appears latest in the filename
-                # (e.g. in 'Buff_Fe_Mn.dat', Mn is likely the target)
-                matches = []
+                # 从文件的上一级文件夹名称中提取 edge
+                folder_name = f.parent.name
                 for edge in edges:
-                    # Use a more restrictive pattern for filename to avoid 'P1' matching 'P'
+                    # 使用严格的模式匹配，避免误匹配
                     pattern = rf"(^|[^a-zA-Z0-9]){edge}([A-Z]|[^a-zA-Z0-9]|$)"
-                    m = re.search(pattern, f.name)
-                    if m:
-                        matches.append((edge, m.start()))
-
-                if matches:
-                    matched_edge = max(matches, key=lambda x: x[1])[0]
-
-                # 2. If not found in filename, try parent folder name
-                if not matched_edge:
-                    for edge in edges:
-                        pattern = rf"(^|[^a-zA-Z0-9]){edge}([A-Z]|[^a-zA-Z0-9]|$)"
-                        if re.search(pattern, f.parent.name):
-                            matched_edge = edge
-                            break
+                    if re.search(pattern, folder_name):
+                        matched_edge = edge
+                        break  # 找到第一个匹配的 edge 即可
 
                 if matched_edge:
                     # Strip any folder named 'edge' from the path parts to get clean_rel_path
