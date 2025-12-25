@@ -243,6 +243,15 @@ class BaseData(HasTraits, XarrayDataMixin):
 
     data = Union([Instance(xr.Dataset), Instance(xr.DataTree)], help="xarray.Dataset or xarray.DataTree containing the data")
 
+    @property
+    def is_tree(self) -> bool:
+        """Check if the data is an xarray.DataTree.
+
+        Returns:
+            True if data is a DataTree, False if it is a Dataset
+        """
+        return isinstance(self.data, xr.DataTree)
+
 
 class RawDataInfo(BaseInfo):
     """Container for all metadata extracted from the file.
