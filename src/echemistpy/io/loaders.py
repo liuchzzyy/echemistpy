@@ -80,10 +80,20 @@ def load(  # noqa: PLR0913, PLR0917
 
     pm = get_plugin_manager()
 
+    # If it's a directory and no extension is provided, we need to find a loader by instrument
+    if path.is_dir() and not ext and instrument:
+        # Search all extensions for this instrument
+        for supported_ext in pm.list_supported_extensions():
+            if instrument.lower() in [inst.lower() for inst in pm.get_loader_instruments(supported_ext)]:
+                ext = supported_ext
+                break
+
     # Check available instruments for this extension
     available_instruments = pm.get_loader_instruments(ext)
 
     if not available_instruments:
+        if path.is_dir():
+            raise ValueError(f"Could not determine loader for directory: {path}. Please specify 'instrument' or 'fmt'.")
         raise ValueError(f"No loader registered for extension: {ext}")
 
     # If multiple loaders exist but no instrument is specified, prompt the user
