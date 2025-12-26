@@ -45,6 +45,11 @@ try:
 except ImportError:
     MISTRALReader = None  # type: ignore
 
+try:
+    from echemistpy.io.plugins.tem.JEMCA_EDS import JEMCAEDSReader
+except ImportError:
+    JEMCAEDSReader = None  # type: ignore
+
 if TYPE_CHECKING:
     pass
 
@@ -228,6 +233,9 @@ def _initialize_default_plugins() -> None:
 
     if MISTRALReader is not None:
         pm.register_loader([".hdf5"], MISTRALReader)
+
+    if JEMCAEDSReader is not None:
+        pm.register_loader([".emd"], JEMCAEDSReader)
 
     pm.initialized = True
 
