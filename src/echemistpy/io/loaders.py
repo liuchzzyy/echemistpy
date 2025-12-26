@@ -40,6 +40,11 @@ try:
 except ImportError:
     CLAESSReader = None  # type: ignore
 
+try:
+    from echemistpy.io.plugins.txm.MISTRAL import MISTRALReader
+except ImportError:
+    MISTRALReader = None  # type: ignore
+
 if TYPE_CHECKING:
     pass
 
@@ -179,6 +184,7 @@ def list_supported_formats() -> Dict[str, str]:
         is_lanhe = any("lanhe" in name.lower() for name in plugin_names)
         is_mspd = any("mspd" in name.lower() for name in plugin_names)
         is_claess = any("claess" in name.lower() for name in plugin_names)
+        is_mistral = any("mistral" in name.lower() for name in plugin_names)
 
         if is_biologic:
             formats[ext] = "BioLogic EC-Lab files (.mpt)"
@@ -188,6 +194,8 @@ def list_supported_formats() -> Dict[str, str]:
             formats[ext] = "MSPD XRD files (.xye)"
         elif is_claess:
             formats[ext] = "ALBA CLAESS XAS files (.dat)"
+        elif is_mistral:
+            formats[ext] = "MISTRAL TXM files (.hdf5)"
         else:
             formats[ext] = f"Loaded by {', '.join(plugin_names)}"
 
@@ -217,6 +225,9 @@ def _initialize_default_plugins() -> None:
 
     if CLAESSReader is not None:
         pm.register_loader([".dat"], CLAESSReader)
+
+    if MISTRALReader is not None:
+        pm.register_loader([".hdf5"], MISTRALReader)
 
     pm.initialized = True
 

@@ -176,6 +176,21 @@ class DataStandardizer(HasTraits):
             "Time": "time/min",
             "t": "time/min",
         },
+        "xas": {
+            "energy": "energy_eV",
+            "Energy": "energy_eV",
+            "energyc": "energy_eV",
+            "energy_eV": "energy_eV",
+            "absorption": "absorption_au",
+            "Absorption": "absorption_au",
+        },
+        "txm": {
+            "energy": "energy_eV",
+            "x": "x_um",
+            "y": "y_um",
+            "transmission": "transmission",
+            "optical_density": "optical_density",
+        },
     }
 
     def __init__(
