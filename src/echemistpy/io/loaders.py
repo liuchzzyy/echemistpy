@@ -35,6 +35,16 @@ try:
 except ImportError:
     MSPDReader = None  # type: ignore
 
+try:
+    from echemistpy.io.plugins.xas.CLAESS import CLAESSReader
+except ImportError:
+    CLAESSReader = None  # type: ignore
+
+try:
+    from echemistpy.io.plugins.txm.MISTRAL import MISTRALReader
+except ImportError:
+    MISTRALReader = None  # type: ignore
+
 if TYPE_CHECKING:
     pass
 
@@ -75,10 +85,20 @@ def load(  # noqa: PLR0913, PLR0917
 
     pm = get_plugin_manager()
 
+    # If it's a directory and no extension is provided, we need to find a loader by instrument
+    if path.is_dir() and not ext and instrument:
+        # Search all extensions for this instrument
+        for supported_ext in pm.list_supported_extensions():
+            if instrument.lower() in [inst.lower() for inst in pm.get_loader_instruments(supported_ext)]:
+                ext = supported_ext
+                break
+
     # Check available instruments for this extension
     available_instruments = pm.get_loader_instruments(ext)
 
     if not available_instruments:
+        if path.is_dir():
+            raise ValueError(f"Could not determine loader for directory: {path}. Please specify 'instrument' or 'fmt'.")
         raise ValueError(f"No loader registered for extension: {ext}")
 
     # If multiple loaders exist but no instrument is specified, prompt the user
@@ -109,7 +129,8 @@ def load(  # noqa: PLR0913, PLR0917
     if not hasattr(reader, "load"):
         raise RuntimeError(f"Reader class {reader_class.__name__} does not implement 'load' method yet.")
 
-    raw_data, raw_info = reader.load()
+    # Pass kwargs to load() to support reader-specific parameters like 'edges'
+    raw_data, raw_info = reader.load(**kwargs)
 
     # Apply manual overrides if provided
     overrides = {
@@ -162,6 +183,8 @@ def list_supported_formats() -> Dict[str, str]:
         is_biologic = any("biologic" in name.lower() for name in plugin_names)
         is_lanhe = any("lanhe" in name.lower() for name in plugin_names)
         is_mspd = any("mspd" in name.lower() for name in plugin_names)
+        is_claess = any("claess" in name.lower() for name in plugin_names)
+        is_mistral = any("mistral" in name.lower() for name in plugin_names)
 
         if is_biologic:
             formats[ext] = "BioLogic EC-Lab files (.mpt)"
@@ -169,6 +192,10 @@ def list_supported_formats() -> Dict[str, str]:
             formats[ext] = "LANHE battery test files (.xlsx)"
         elif is_mspd:
             formats[ext] = "MSPD XRD files (.xye)"
+        elif is_claess:
+            formats[ext] = "ALBA CLAESS XAS files (.dat)"
+        elif is_mistral:
+            formats[ext] = "MISTRAL TXM files (.hdf5)"
         else:
             formats[ext] = f"Loaded by {', '.join(plugin_names)}"
 
@@ -195,6 +222,12 @@ def _initialize_default_plugins() -> None:
 
     if MSPDReader is not None:
         pm.register_loader([".xye"], MSPDReader)
+
+    if CLAESSReader is not None:
+        pm.register_loader([".dat"], CLAESSReader)
+
+    if MISTRALReader is not None:
+        pm.register_loader([".hdf5"], MISTRALReader)
 
     pm.initialized = True
 
