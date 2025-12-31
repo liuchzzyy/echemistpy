@@ -447,7 +447,8 @@ class BiologicMPTReader(HasTraits):
                     all_techs.append(tech)
 
         # Collect unique values for each field
-        sample_names = sorted({info.sample_name for info in infos if info.sample_name})
+        # Keep sample_names in original order without deduplication (one per file)
+        sample_names = [info.sample_name for info in infos if info.sample_name]
         operators = sorted({info.operator for info in infos if info.operator})
         start_times = sorted({info.start_time for info in infos if info.start_time})
         masses = sorted({info.active_material_mass for info in infos if info.active_material_mass})
@@ -466,8 +467,12 @@ class BiologicMPTReader(HasTraits):
         if len(masses) > 1:
             combined_others["all_active_material_masses"] = masses
 
+        # Determine folder name: use absolute path if root_path is relative like '.' or '..'
+        # Note: Path('.').name returns empty string '', not '.'
+        folder_name = root_path.resolve().name if root_path.name in (".", "..", "") else root_path.name
+
         return RawDataInfo(
-            sample_name=self.sample_name or root_path.name,  # Use folder name as primary sample_name
+            sample_name=self.sample_name or folder_name,  # Use folder name as primary sample_name
             technique=all_techs,
             instrument=self.instrument,
             operator=self.operator or (operators[0] if len(operators) == 1 else None),

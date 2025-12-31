@@ -207,26 +207,61 @@ class LanheXLSXReader(HasTraits):
         return RawData(data=tree), self._merge_infos(infos, path)
 
     def _merge_infos(self, infos: List[RawDataInfo], root_path: Path) -> RawDataInfo:
-        """Merge multiple RawDataInfo objects into a single root info."""
+        """Merge multiple RawDataInfo objects.
+
+        Combines metadata from multiple files, storing unique values in lists.
+        Removes duplicates from each field.
+        """
         if not infos:
             return RawDataInfo()
 
-        base = infos[0]
-        all_techs = {t for info in infos for t in info.technique}
+        # Collect techniques from all files
+        # 'echem' is kept unique, other techniques can repeat (one per file)
+        all_techs = []
+        seen_echem = False
+        for info in infos:
+            for tech in info.technique:
+                if tech.lower() == "echem":
+                    if not seen_echem:
+                        all_techs.append(tech)
+                        seen_echem = True
+                else:
+                    all_techs.append(tech)
+
+        # Collect unique values for each field
+        # Keep sample_names in original order without deduplication (one per file)
+        sample_names = [info.sample_name for info in infos if info.sample_name]
+        operators = sorted({info.operator for info in infos if info.operator})
+        start_times = sorted({info.start_time for info in infos if info.start_time})
+        masses = sorted({info.active_material_mass for info in infos if info.active_material_mass})
+        wave_numbers = sorted({info.wave_number for info in infos if info.wave_number})
+
+        # Build combined others dict with all unique metadata
+        combined_others = {
+            "n_files": len(infos),
+            # Always store all sample names as a list for folder loading
+            "sample_names": sample_names,
+        }
+
+        # Add list versions of other metadata if multiple unique values exist
+        if len(operators) > 1:
+            combined_others["all_operators"] = operators
+        if len(masses) > 1:
+            combined_others["all_active_material_masses"] = masses
+
+        # Determine folder name: use absolute path if root_path is relative like '.' or '..'
+        # Note: Path('.').name returns empty string '', not '.'
+        folder_name = root_path.resolve().name if root_path.name in (".", "..", "") else root_path.name
 
         return RawDataInfo(
-            sample_name=self.sample_name or root_path.name,
-            start_time=self.start_time or base.start_time,
-            operator=self.operator or base.operator,
-            technique=list(all_techs),
-            instrument=self.instrument or base.instrument,
-            active_material_mass=self.active_material_mass or base.active_material_mass,
-            wave_number=self.wave_number or base.wave_number,
-            others={
-                "merged_files": [str(info.get("file_path")) for info in infos if info.get("file_path")],
-                "n_files": len(infos),
-                "structure": "DataTree",
-            },
+            sample_name=self.sample_name or folder_name,  # Use folder name as primary sample_name
+            technique=all_techs,
+            instrument=self.instrument,
+            operator=self.operator or (operators[0] if len(operators) == 1 else None),
+            start_time=self.start_time or (start_times[0] if len(start_times) == 1 else None),
+            active_material_mass=self.active_material_mass or (masses[0] if len(masses) == 1 else None),
+            wave_number=self.wave_number or (wave_numbers[0] if len(wave_numbers) == 1 else None),
+            others=combined_others,
         )
 
     def _read_xlsx(self, filepath: Path) -> Tuple[Dict[str, Any], Dict[str, Any]]:
