@@ -426,7 +426,7 @@ class BiologicMPTReader(HasTraits):
 
     def _merge_infos(self, infos: List[RawDataInfo], root_path: Path) -> RawDataInfo:
         """Merge multiple RawDataInfo objects.
-        
+
         Combines metadata from multiple files, storing unique values in lists.
         Removes duplicates from each field.
         """
@@ -439,33 +439,33 @@ class BiologicMPTReader(HasTraits):
         seen_echem = False
         for info in infos:
             for tech in info.technique:
-                if tech.lower() == 'echem':
+                if tech.lower() == "echem":
                     if not seen_echem:
                         all_techs.append(tech)
                         seen_echem = True
                 else:
                     all_techs.append(tech)
-        
+
         # Collect unique values for each field
         sample_names = sorted({info.sample_name for info in infos if info.sample_name})
         operators = sorted({info.operator for info in infos if info.operator})
         start_times = sorted({info.start_time for info in infos if info.start_time})
         masses = sorted({info.active_material_mass for info in infos if info.active_material_mass})
         wave_numbers = sorted({info.wave_number for info in infos if info.wave_number})
-        
+
         # Build combined others dict with all unique metadata
         combined_others = {
             "n_files": len(infos),
             # Always store all sample names as a list for folder loading
             "sample_names": sample_names,
         }
-        
+
         # Add list versions of other metadata if multiple unique values exist
         if len(operators) > 1:
             combined_others["all_operators"] = operators
         if len(masses) > 1:
             combined_others["all_active_material_masses"] = masses
-        
+
         return RawDataInfo(
             sample_name=self.sample_name or root_path.name,  # Use folder name as primary sample_name
             technique=all_techs,

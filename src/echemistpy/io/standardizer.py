@@ -489,7 +489,7 @@ def standardize_names(
                     else:
                         # Drop the original variable with "/" since standardized version exists
                         vars_to_drop.append(var_str)
-            
+
             if vars_to_drop:
                 standardized_ds = standardized_ds.drop_vars(vars_to_drop)
             if rename_dict:
