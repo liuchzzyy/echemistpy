@@ -8,13 +8,14 @@ import os
 import re
 from datetime import datetime
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, ClassVar, Dict, List, Optional, Tuple, Union, cast
 
 import numpy as np
 import pandas as pd
 import xarray as xr
 from scipy.interpolate import interp1d
-from traitlets import HasTraits, List, Unicode
+from traitlets import HasTraits, Unicode
+from traitlets import List as TList
 
 from echemistpy.io.structures import RawData, RawDataInfo
 
@@ -29,26 +30,52 @@ class CLAESSReader(HasTraits):
     Filters files to only include those without digits in their names.
     """
 
+    # --- Constants ---
+    DEFAULT_TECHNIQUE: ClassVar[List[str]] = ["xas", "operando"]
+    INSTRUMENT_NAME: ClassVar[str] = "CLAESS"
+    DEFAULT_COLUMNS: ClassVar[List[str]] = [
+        "energyc",
+        "a_i0_1",
+        "a_i0_2",
+        "a_i1_1",
+        "a_i1_2",
+        "absorption",
+    ]
+    DATE_FORMAT: ClassVar[str] = "%a %b %d %H:%M:%S %Y"
+
+    # --- Loader Metadata ---
+    supports_directories: ClassVar[bool] = True
+    instrument: ClassVar[str] = "claess"
+
+    # --- Traitlets ---
     filepath = Unicode()
     sample_name = Unicode(None, allow_none=True)
-    technique = List(Unicode(), default_value=["xas", "operando"])
-    instrument = Unicode("CLAESS", allow_none=True)
-    selected_columns = List(Unicode(), default_value=["energyc", "a_i0_1", "a_i0_2", "a_i1_1", "a_i1_2", "absorption"], help="Columns to keep when cleaning.")
+    technique = TList(Unicode(), default_value=DEFAULT_TECHNIQUE)
+    # instrument traitlet removed to avoid conflict with ClassVar
+    selected_columns = TList(Unicode(), default_value=DEFAULT_COLUMNS, help="Columns to keep when cleaning.")
 
-    def __init__(self, filepath: str | Path | None = None, **kwargs):
+    def __init__(self, filepath: Optional[Union[str, Path]] = None, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         if filepath:
             self.filepath = str(filepath)
 
-    @staticmethod
-    def parse_date(date_str: str) -> datetime:
+    @classmethod
+    def parse_date(cls, date_str: str) -> datetime:
         """Parse SPEC date format: Thu Dec 11 12:52:40 2025."""
-        return datetime.strptime(date_str, "%a %b %d %H:%M:%S %Y")
+        return datetime.strptime(date_str, cls.DATE_FORMAT)
 
-    def load(self, edges: list[str] | None = None, **_kwargs) -> tuple[RawData, RawDataInfo]:
-        """Load CLAESS file(s) and return RawData and RawDataInfo."""
+    def load(self, edges: Optional[List[str]] = None, **_kwargs: Any) -> Tuple[RawData, RawDataInfo]:
+        """Load CLAESS file(s) and return RawData and RawDataInfo.
+
+        Args:
+            edges: Optional list of absorption edges to filter by.
+            **_kwargs: Additional arguments.
+
+        Returns:
+            Tuple of (RawData, RawDataInfo)
+        """
         if not self.filepath:
-            raise ValueError("filepath not set")
+            raise ValueError("filepath must be set before calling load()")
 
         path = Path(self.filepath)
         if not path.exists():
@@ -58,41 +85,54 @@ class CLAESSReader(HasTraits):
             return self._load_single_file(path)
         if path.is_dir():
             return self._load_directory(path, edges=edges)
+
         raise ValueError(f"Path is neither a file nor a directory: {path}")
 
-    def _clean_data(self, data: xr.Dataset | xr.DataTree) -> xr.Dataset | xr.DataTree:
+    def _clean_data(self, data: Union[xr.Dataset, xr.DataTree]) -> Union[xr.Dataset, xr.DataTree]:
         """Keep only specific columns defined in selected_columns."""
         if isinstance(data, xr.Dataset):
             existing_cols = [c for c in self.selected_columns if c in data.data_vars or c in data.coords]
             result = data[existing_cols]
             return result.to_dataset() if isinstance(result, xr.DataArray) else result
+
         if isinstance(data, xr.DataTree):
-            # For DataTree, we need to create a new tree with filtered datasets
             new_dict = {}
             for node in data.subtree:
-                path = node.path
                 if node.dataset is not None:
                     existing_cols = [c for c in self.selected_columns if c in node.dataset.data_vars or c in node.dataset.coords]
                     result = node.dataset[existing_cols]
-                    new_dict[path] = result.to_dataset() if isinstance(result, xr.DataArray) else result
+                    new_dict[node.path] = result.to_dataset() if isinstance(result, xr.DataArray) else result
             return xr.DataTree.from_dict(new_dict, name=data.name)
+
         return data
 
-    def _load_single_file(self, path: Path) -> tuple[RawData, RawDataInfo]:
+    def _load_single_file(self, path: Path) -> Tuple[RawData, RawDataInfo]:
         """Internal method to load a single CLAESS file."""
-        if path.suffix.lower() == ".dat":
-            data_obj, metadata = self._read_spec_file(path)
-        else:
+        if path.suffix.lower() != ".dat":
             raise ValueError(f"Unsupported file extension: {path.suffix}")
+
+        data_obj, metadata = self._read_spec_file(path)
 
         # Automatically clean data
         data = self._clean_data(data_obj)
 
+        # Determine number of records
         n_records = (len(data.record) if "record" in data.dims else 1) if isinstance(data, xr.Dataset) else len(data.children)
+
+        # Add metadata to Xarray object
+        data.attrs.update({
+            "file_name": [path.stem],
+            "n_files": n_records,
+            "structure": "Dataset" if isinstance(data, xr.Dataset) else "DataTree",
+        })
+
+        # Add units and long names if it's a Dataset
+        if isinstance(data, xr.Dataset):
+            self._apply_standard_attrs(data)
 
         raw_info = RawDataInfo(
             sample_name=self.sample_name or path.stem,
-            technique=self.technique,
+            technique=list(self.technique),
             instrument=self.instrument,
             start_time=metadata.get("start_time"),
             others={
@@ -101,16 +141,21 @@ class CLAESSReader(HasTraits):
             },
         )
 
-        # Set standardized attributes
-        data.attrs = {
-            "file_name": [path.stem],
-            "n_files": n_records,
-            "structure": "Dataset" if isinstance(data, xr.Dataset) else "DataTree",
-        }
-
         return RawData(data=data), raw_info
 
-    def _read_spec_file(self, path: Path) -> tuple[xr.Dataset | xr.DataTree, dict]:
+    @staticmethod
+    def _apply_standard_attrs(ds: xr.Dataset) -> None:
+        """Apply standard units and long names to the dataset."""
+        if "energyc" in ds:
+            ds.energyc.attrs.update({"units": "eV", "long_name": "Energy"})
+        if "absorption" in ds:
+            ds.absorption.attrs.update({"units": "a.u.", "long_name": "Absorption"})
+        if "time_s" in ds.coords:
+            ds.time_s.attrs.update({"units": "s", "long_name": "Relative Time"})
+        if "systime" in ds.coords:
+            ds.systime.attrs.update({"long_name": "System Time"})
+
+    def _read_spec_file(self, path: Path) -> Tuple[Union[xr.Dataset, xr.DataTree], Dict[str, Any]]:
         """Parse a SPEC-like .dat file with multiple scans."""
         datasets, scan_times, header = self._parse_spec_file(path)
         merged = self._merge_scans(datasets, scan_times, path.stem)
@@ -118,13 +163,11 @@ class CLAESSReader(HasTraits):
         if merged is None:
             raise ValueError(f"Failed to merge scans in {path}")
 
-        start_time = None
-        if isinstance(merged, xr.Dataset):
-            start_time = merged.attrs.get("start_time")
+        start_time = merged.attrs.get("start_time") if isinstance(merged, xr.Dataset) else None
 
         return merged, {"header": header, "start_time": start_time}
 
-    def _parse_spec_file(self, path: Path) -> tuple[dict[str, xr.Dataset], dict[str, datetime], str]:
+    def _parse_spec_file(self, path: Path) -> Tuple[Dict[str, xr.Dataset], Dict[str, datetime], str]:
         """Internal method to parse SPEC file into raw datasets and times."""
         with open(path, "r", encoding="utf-8", errors="ignore") as f:
             content = f.read()
@@ -149,7 +192,7 @@ class CLAESSReader(HasTraits):
         return datasets, scan_times, header
 
     @staticmethod
-    def _parse_simple_table(path: Path, header: str) -> tuple[dict[str, xr.Dataset], dict[str, datetime], str]:
+    def _parse_simple_table(path: Path, header: str) -> Tuple[Dict[str, xr.Dataset], Dict[str, datetime], str]:
         """Parse a simple table file without SPEC headers."""
         try:
             df = pd.read_csv(path, sep=r"\s+", comment="#", header=None)
@@ -158,7 +201,7 @@ class CLAESSReader(HasTraits):
         except Exception as e:
             raise ValueError(f"No scans found and failed to read as table in {path}: {e}") from e
 
-    def _parse_single_scan(self, scan_content: str, path: Path) -> tuple[str, xr.Dataset | None, datetime | None]:
+    def _parse_single_scan(self, scan_content: str, path: Path) -> Tuple[str, Optional[xr.Dataset], Optional[datetime]]:
         """Parse a single scan block from a SPEC file."""
         lines = scan_content.splitlines()
         if not lines:
@@ -186,6 +229,7 @@ class CLAESSReader(HasTraits):
 
         try:
             df = pd.DataFrame(data_lines, columns=cast(Any, columns)).astype(float)
+            # Calculate absorption if possible
             if all(c in df.columns for c in ["a_i0_1", "a_i0_2", "a_i1_1", "a_i1_2"]):
                 ratio = (df["a_i0_1"] + df["a_i0_2"]) / (df["a_i1_1"] + df["a_i1_2"])
                 df["absorption"] = np.log(ratio.where(ratio > 0))
@@ -199,7 +243,7 @@ class CLAESSReader(HasTraits):
             return scan_id, None, None
 
     @staticmethod
-    def _interpolate_datasets(ds_list: list[xr.Dataset]) -> list[xr.Dataset]:
+    def _interpolate_datasets(ds_list: List[xr.Dataset]) -> List[xr.Dataset]:
         """Interpolate multiple datasets onto a common energy grid."""
         all_energies = [ds.energyc.values for ds in ds_list if "energyc" in ds.coords]
         if not all_energies:
@@ -219,7 +263,7 @@ class CLAESSReader(HasTraits):
         return interpolated_list
 
     @staticmethod
-    def _calculate_scan_times(combined: xr.Dataset, scan_ids: list[str], scan_times: dict[str, datetime]) -> xr.Dataset:
+    def _calculate_scan_times(combined: xr.Dataset, scan_ids: List[str], scan_times: Dict[str, datetime]) -> xr.Dataset:
         """Calculate and add systime and time_s to the combined dataset."""
         if not scan_times:
             return combined
@@ -230,11 +274,11 @@ class CLAESSReader(HasTraits):
         valid_times = systimes[systimes.notnull()]
         if not valid_times.empty:
             t0 = valid_times[0]
-            combined.coords["time_s"] = ("record", systimes - t0)
+            combined.coords["time_s"] = ("record", (systimes - t0).total_seconds())
         return combined
 
     @staticmethod
-    def _merge_scans(datasets: dict[str, xr.Dataset], scan_times: dict[str, datetime], name: str) -> xr.Dataset | xr.DataTree | None:
+    def _merge_scans(datasets: Dict[str, xr.Dataset], scan_times: Dict[str, datetime], name: str) -> Optional[Union[xr.Dataset, xr.DataTree]]:
         """Internal method to merge multiple scan datasets into one."""
         if not datasets:
             return None
@@ -261,24 +305,7 @@ class CLAESSReader(HasTraits):
             sid = next(iter(datasets.keys()))
             if sid in scan_times:
                 ds.coords["systime"] = ("record", pd.to_datetime([scan_times[sid]]))
-                ds.coords["time_s"] = ("record", pd.to_timedelta([0], unit="s"))
-            ds.attrs["start_time"] = start_time
-            return ds
-
-        return xr.DataTree.from_dict(datasets, name=name)
-
-        if len(datasets) == 1:
-            ds = next(iter(datasets.values()))
-            # Expand dims to make record a dimension
-            ds = ds.expand_dims("record")
-            ds = ds.assign_coords(record=[1])
-            ds = ds.assign_coords(file_name=("record", [name]))
-
-            sid = next(iter(datasets.keys()))
-            if sid in scan_times:
-                ds.coords["systime"] = ("record", pd.to_datetime([scan_times[sid]]))
-                ds.coords["time_s"] = ("record", pd.to_timedelta([0], unit="s"))
-
+                ds.coords["time_s"] = ("record", [0.0])
             ds.attrs["start_time"] = start_time
             return ds
 

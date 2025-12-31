@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
-from typing import Any, Optional, cast
+from typing import Any, Optional, TypeVar, cast
 
 import pandas as pd
 import xarray as xr
 from traitlets import Dict, HasTraits, Instance, List, Unicode, Union
+
+T = TypeVar("T", bound="BaseInfo")
 
 
 class MetadataInfoMixin:
@@ -204,7 +206,7 @@ class BaseInfo(HasTraits, MetadataInfoMixin):
     active_material_mass = Unicode(None, allow_none=True)
     wave_number = Unicode(None, allow_none=True)
 
-    def copy(self) -> Any:
+    def copy(self: T) -> T:
         """Create a copy of the info object.
 
         Returns:
@@ -212,7 +214,7 @@ class BaseInfo(HasTraits, MetadataInfoMixin):
         """
         return self.__class__(**self.to_dict())
 
-    def __init__(self, **kwargs):
+    def __init__(self, **kwargs: Any) -> None:
         """Initialize with standard metadata defaults.
 
         Args:

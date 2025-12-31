@@ -21,49 +21,39 @@ from echemistpy.io.structures import (
 
 # Import default plugins
 try:
-    from echemistpy.io.plugins.echem.BiologicMPTReader import BiologicMPTReader
+    from echemistpy.io.plugins.Echem_BiologicMPTReader import BiologicMPTReader
 except ImportError:
     BiologicMPTReader = None  # type: ignore
 
 try:
-    from echemistpy.io.plugins.echem.LanheXLSXReader import LanheXLSXReader
+    from echemistpy.io.plugins.Echem_LanheXLSXReader import LanheXLSXReader
 except ImportError:
     LanheXLSXReader = None  # type: ignore
 
 try:
-    from echemistpy.io.plugins.xrd.MSPD import MSPDReader
+    from echemistpy.io.plugins.XRD_MSPD import MSPDReader
 except ImportError:
     MSPDReader = None  # type: ignore
 
 try:
-    from echemistpy.io.plugins.xas.CLAESS import CLAESSReader
+    from echemistpy.io.plugins.XAS_CLAESS import CLAESSReader
 except ImportError:
     CLAESSReader = None  # type: ignore
 
 try:
-    from echemistpy.io.plugins.txm.MISTRAL import MISTRALReader
+    from echemistpy.io.plugins.TXM_MISTRAL import MISTRALReader
 except ImportError:
     MISTRALReader = None  # type: ignore
-
-try:
-    from echemistpy.io.plugins.tem.JEMCA_EDS import JEMCAEDSReader
-except ImportError:
-    JEMCAEDSReader = None  # type: ignore
 
 if TYPE_CHECKING:
     pass
 
 
-def load(  # noqa: PLR0913, PLR0917
+def load(
     path: str | Path,
     fmt: Optional[str] = None,
     technique: Optional[str | list[str]] = None,
-    sample_name: Optional[str] = None,
-    start_time: Optional[str] = None,
     instrument: Optional[str] = None,
-    operator: Optional[str] = None,
-    active_material_mass: Optional[str] = None,
-    wave_number: Optional[str] = None,
     standardize: bool = True,
     **kwargs: Any,
 ) -> Tuple[RawData, RawDataInfo]:
@@ -73,18 +63,30 @@ def load(  # noqa: PLR0913, PLR0917
         path: Path to the data file
         fmt: Optional format override (e.g., '.mpt')
         technique: Optional technique hint (string or list of strings)
-        sample_name: Optional sample name override
-        start_time: Optional start time override
         instrument: Optional instrument name override
-        operator: Optional operator name override
-        active_material_mass: Optional active material mass override
-        wave_number: Optional wave number override
         standardize: Whether to automatically standardize the data (default: True)
-        **kwargs: Additional arguments passed to the specific reader
+        **kwargs: Additional arguments passed to the specific reader:
+            - sample_name: Optional sample name override
+            - start_time: Optional start time override
+            - operator: Optional operator name override
+            - active_material_mass: Optional active material mass override
+            - wave_number: Optional wave number override
 
     Returns:
         Tuple of (RawData, RawDataInfo)
     """
+    # Extract metadata overrides from kwargs
+    overrides: dict[str, Any] = {
+        "sample_name": kwargs.get("sample_name"),
+        "start_time": kwargs.get("start_time"),
+        "operator": kwargs.get("operator"),
+        "active_material_mass": kwargs.get("active_material_mass"),
+        "wave_number": kwargs.get("wave_number"),
+        "instrument": instrument,
+    }
+    if technique:
+        overrides["technique"] = [technique] if isinstance(technique, str) else technique
+
     path = Path(path) if isinstance(path, str) else path
     ext = fmt if fmt else path.suffix.lower()
 
@@ -118,15 +120,7 @@ def load(  # noqa: PLR0913, PLR0917
 
     # Instantiate reader and load raw data
     # Pass standard metadata to reader if provided
-    standard_metadata = {
-        "sample_name": sample_name,
-        "start_time": start_time,
-        "instrument": instrument,
-        "operator": operator,
-        "active_material_mass": active_material_mass,
-        "wave_number": wave_number,
-    }
-    for k, v in standard_metadata.items():
+    for k, v in overrides.items():
         if v is not None:
             kwargs[k] = v
 
@@ -137,19 +131,7 @@ def load(  # noqa: PLR0913, PLR0917
     # Pass kwargs to load() to support reader-specific parameters like 'edges'
     raw_data, raw_info = reader.load(**kwargs)
 
-    # Apply manual overrides if provided
-    overrides = {
-        "sample_name": sample_name,
-        "start_time": start_time,
-        "instrument": instrument,
-        "operator": operator,
-        "wave_number": wave_number,
-        "active_material_mass": active_material_mass,
-    }
-    if technique:
-        overrides["technique"] = [technique] if isinstance(technique, str) else technique
-
-    # Filter out None values
+    # Filter out None values and apply manual overrides
     raw_info.update({k: v for k, v in overrides.items() if v is not None})
 
     if not standardize:
@@ -233,9 +215,6 @@ def _initialize_default_plugins() -> None:
 
     if MISTRALReader is not None:
         pm.register_loader([".hdf5"], MISTRALReader)
-
-    if JEMCAEDSReader is not None:
-        pm.register_loader([".emd"], JEMCAEDSReader)
 
     pm.initialized = True
 

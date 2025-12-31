@@ -7,6 +7,7 @@ It supports common formats like CSV, JSON, and NetCDF/HDF5.
 from __future__ import annotations
 
 import json
+from datetime import datetime, date
 from pathlib import Path
 from typing import Any, Optional, Sequence, Union
 
@@ -19,6 +20,17 @@ from echemistpy.io.structures import (
 )
 
 
+class MetadataEncoder(json.JSONEncoder):
+    """Custom JSON encoder for metadata containing datetime objects."""
+
+    def default(self, obj: Any) -> Any:
+        if isinstance(obj, (datetime, date)):
+            return obj.isoformat()
+        if isinstance(obj, Path):
+            return str(obj)
+        return super().default(obj)
+
+
 def _to_list(obj: Any) -> list[Any]:
     """Convert object to list if it's not already a sequence."""
     if isinstance(obj, (list, tuple)):
@@ -29,10 +41,20 @@ def _to_list(obj: Any) -> list[Any]:
 def _sanitize_dataset(ds: xr.Dataset) -> xr.Dataset:
     """Sanitize dataset variable and coordinate names for NetCDF saving.
     Replaces '/' with '_' as NetCDF/HDF5 doesn't allow '/' in names.
+    Also handles timedelta64 encoding conflicts.
     """
+    # 1. Rename variables with '/'
     rename_dict = {str(name): str(name).replace("/", "_") for name in list(ds.data_vars) + list(ds.coords) if "/" in str(name)}
     if rename_dict:
-        return ds.rename(rename_dict)
+        ds = ds.rename(rename_dict)
+
+    # 2. Handle timedelta64 units conflict
+    for var_name in list(ds.data_vars) + list(ds.coords):
+        if ds[var_name].dtype.kind == "m":  # timedelta64
+            if "units" in ds[var_name].attrs:
+                # Remove units attribute to let xarray handle encoding
+                del ds[var_name].attrs["units"]
+
     return ds
 
 
@@ -56,7 +78,7 @@ def save_info(
     output = data_to_save[0] if len(data_to_save) == 1 else data_to_save
 
     with open(path, "w", encoding="utf-8") as f:
-        json.dump(output, f, indent=4, ensure_ascii=False)
+        json.dump(output, f, indent=4, ensure_ascii=False, cls=MetadataEncoder)
 
 
 def save_data(
@@ -139,7 +161,7 @@ def save_combined(
                 info_dict[k] = v
             else:
                 # Convert dicts and nested structures to JSON strings
-                info_dict[k] = json.dumps(v, ensure_ascii=False)
+                info_dict[k] = json.dumps(v, ensure_ascii=False, cls=MetadataEncoder)
         ds.attrs.update(info_dict)
         combined_datasets.append(_sanitize_dataset(ds))
 

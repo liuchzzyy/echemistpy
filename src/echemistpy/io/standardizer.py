@@ -8,7 +8,7 @@ and techniques.
 from __future__ import annotations
 
 import warnings
-from typing import ClassVar, Dict, Optional, Tuple
+from typing import Any, ClassVar, Dict, Optional, Tuple
 
 import numpy as np
 import xarray as xr
@@ -76,11 +76,13 @@ class DataStandardizer(HasTraits):
             "potential_V": "ewe_v",
             "voltage_v": "ewe_v",
             "Potential/V": "ewe_v",
+            "Potential_V": "ewe_v",
             # Battery voltage variants (cell voltage)
             "voltage": "voltage_v",
             "Voltage": "voltage_v",
             "V": "voltage_v",
             "voltage_V": "voltage_v",
+            "Voltage_V": "voltage_v",
             "battery_voltage": "voltage_v",
             "Battery_Voltage": "voltage_v",
             "V_batt": "voltage_v",
@@ -89,18 +91,21 @@ class DataStandardizer(HasTraits):
             "Cell_Voltage": "voltage_v",
             "voltage/V": "voltage_v",
             "Voltage/V": "voltage_v",
+            "voltage_v": "voltage_v",
             # Current variants
             "current": "current_ma",
             "Current": "current_ma",
             "I": "current_ma",
             "i": "current_ma",
             "current_mA": "current_ma",
+            "Current_mA": "current_ma",
             "I_mA": "current_ma",
             "<I>/mA": "current_ma",
             "I/mA": "current_ma",
             "Current/mA": "current_ma",
             "control/V/mA": "current_ma",
             "current_ua": "current_ua",
+            "Current_uA": "current_ua",
             "current_ma": "current_ma",
             "current/uA": "current_ua",
             "current/mA": "current_ma",
@@ -113,6 +118,7 @@ class DataStandardizer(HasTraits):
             "Capacity": "capacity_mah",
             "(Q-Qo)/mA.h": "capacity_mah",
             "capacity_uah": "capacity_uah",
+            "Capacity_uAh": "capacity_uah",
             "capacity_mah": "capacity_mah",
             "capacity/uAh": "capacity_uah",
             "capacity/mAh": "capacity_mah",
@@ -123,27 +129,35 @@ class DataStandardizer(HasTraits):
             "Capacity/uA.h": "capacity_uah",
             "Capacity/uAh": "capacity_uah",
             "SpeCap/mAh/g": "specific_capacity_mah_g",
+            "SpeCap_mAh_g": "specific_capacity_mah_g",
             "SpeCap_cal/mAh/g": "specific_capacity_cal_mah_g",
+            "SpeCap_cal_mAh_g": "specific_capacity_cal_mah_g",
             "SpeCap_cal/mA.h/g": "specific_capacity_cal_mah_g",
             "Capacity_mA.h": "capacity_mah",
             "SpeCap_cal_mAh_g": "specific_capacity_cal_mah_g",
             # EIS variants
             "freq/Hz": "frequency_hz",
+            "Freq_Hz": "frequency_hz",
             "frequency": "frequency_hz",
             "Frequency": "frequency_hz",
             "Re(Z)/Ohm": "re_z_ohm",
+            "Re_Z_Ohm": "re_z_ohm",
             "Z'": "re_z_ohm",
             "Z_real": "re_z_ohm",
             "-Im(Z)/Ohm": "-im_z_ohm",
+            "-Im_Z_Ohm": "-im_z_ohm",
             "Z''": "-im_z_ohm",
             "Z_imag": "-im_z_ohm",
             "|Z|/Ohm": "z_mag_ohm",
             "Z_mag": "z_mag_ohm",
             "Phase(Z)/deg": "phase_deg",
+            "Phase_Z_deg": "phase_deg",
             "phase": "phase_deg",
             "Phase": "phase_deg",
             "dQdV/uAh/V": "dqdv_uah_v",
+            "dQdV_uAh_V": "dqdv_uah_v",
             "dVdQ/V/uAh": "dvdq_v_uah",
+            "dVdQ_V_uAh": "dvdq_v_uah",
         },
         "xrd": {
             "2theta": "2theta_degree",
@@ -198,8 +212,8 @@ class DataStandardizer(HasTraits):
         dataset: xr.Dataset,
         techniques: list[str] | str = "unknown",
         instrument: Optional[str] = None,
-        **kwargs,
-    ):
+        **kwargs: Any,
+    ) -> None:
         """Initialize with a dataset, technique(s), and instrument."""
         if isinstance(techniques, str):
             techniques = [techniques]
@@ -267,62 +281,62 @@ class DataStandardizer(HasTraits):
                 if new_name != old_name:
                     # Avoid conflicts if new_name already exists
                     if new_name in self.dataset:
-                        # If the target name already exists (e.g. as a coordinate),
-                        # we drop the old one to avoid redundancy.
+                        # If the target name already exists, we check if they are identical
+                        # If they are, we can safely drop the old one.
+                        # Otherwise, we might want to keep both or prioritize one.
+                        # For now, we drop the old one to avoid redundancy.
                         if old_name in self.dataset:
                             self.dataset = self.dataset.drop_vars(old_name)
                         continue
                     rename_dict[old_name] = new_name
 
         if rename_dict:
+            # Use a safer rename that handles potential conflicts better
+            # We already checked for conflicts above, but let's be careful
             self.dataset = self.dataset.rename(rename_dict)
 
         return self
 
     def standardize_units(self) -> "DataStandardizer":
         """Convert units to standard echemistpy conventions."""
-        for var_name in list(self.dataset.data_vars.keys()):
+        for var_name in list(self.dataset.data_vars.keys()) + list(self.dataset.coords.keys()):
             var_data = self.dataset[var_name]
+            var_lower = var_name.lower()
 
             # Handle time conversions
-            if "time" in var_name.lower() or "Time" in var_name:
-                if "min" in var_name:
-                    # Convert minutes to seconds
+            if var_name == "time_s":
+                # Convert float seconds to timedelta64[ns]
+                if var_data.dtype != "timedelta64[ns]":
+                    self.dataset[var_name] = (var_data * 1e9).astype("timedelta64[ns]")
+
+            elif "time" in var_lower or var_name == "t":
+                if "min" in var_lower:
                     self.dataset[var_name] = var_data * 60
-                    new_name = var_name.replace("min", "s")
-                    self.dataset = self.dataset.rename({var_name: new_name})
-                elif "h" in var_name and "mA.h" not in var_name:
-                    # Convert hours to seconds
+                    self.dataset = self.dataset.rename({var_name: var_name.replace("min", "s")})
+                elif "h" in var_lower and "mah" not in var_lower:
                     self.dataset[var_name] = var_data * 3600
-                    new_name = var_name.replace("h", "s")
-                    self.dataset = self.dataset.rename({var_name: new_name})
+                    self.dataset = self.dataset.rename({var_name: var_name.replace("h", "s")})
 
             # Handle current conversions
-            elif "current" in var_name.lower() or var_name.startswith("I"):
-                if "/A" in var_name or "_A" in var_name:
-                    # Convert A to mA
+            elif "current" in var_lower or var_name.startswith("I"):
+                if "/a" in var_lower or "_a" in var_lower:
                     self.dataset[var_name] = var_data * 1000
-                    new_name = var_name.replace("/A", "/mA").replace("_A", "_mA")
+                    new_name = var_name.replace("/A", "/mA").replace("_A", "_mA").replace("/a", "/mA").replace("_a", "_mA")
                     self.dataset = self.dataset.rename({var_name: new_name})
-                elif "/μA" in var_name or "/uA" in var_name:
-                    # Convert μA to mA
+                elif "/μa" in var_lower or "/ua" in var_lower:
                     self.dataset[var_name] = var_data / 1000
-                    new_name = var_name.replace("/μA", "/mA").replace("/uA", "/mA")
+                    new_name = var_name.replace("/μA", "/mA").replace("/uA", "/mA").replace("/μa", "/mA").replace("/ua", "/mA")
                     self.dataset = self.dataset.rename({var_name: new_name})
 
             # Handle voltage conversions
-            elif ("voltage" in var_name.lower() or "potential" in var_name.lower() or var_name.startswith("E")) and "/mV" in var_name:
-                # Convert mV to V
+            elif ("voltage" in var_lower or "potential" in var_lower or var_name.startswith("E")) and "/mv" in var_lower:
                 self.dataset[var_name] = var_data / 1000
-                new_name = var_name.replace("/mV", "/V")
-                self.dataset = self.dataset.rename({var_name: new_name})
+                self.dataset = self.dataset.rename({var_name: var_name.replace("/mV", "/V").replace("/mv", "/V")})
 
             # Handle capacity conversions
-            elif ("capacity" in var_name.lower() or var_name.startswith("Q")) and "/uAh" in var_name:
-                # Convert uAh to mAh
+            elif ("capacity" in var_lower or var_name.startswith("Q")) and "/uah" in var_lower:
                 self.dataset[var_name] = var_data / 1000
-                new_name = var_name.replace("/uAh", "/mAh")
-                self.dataset = self.dataset.rename({var_name: new_name})
+                self.dataset = self.dataset.rename({var_name: var_name.replace("/uAh", "/mAh").replace("/uah", "/mAh")})
 
         return self
 
