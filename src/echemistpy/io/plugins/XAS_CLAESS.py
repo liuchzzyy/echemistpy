@@ -31,7 +31,7 @@ class CLAESSReader(HasTraits):
     """
 
     # --- Constants ---
-    DEFAULT_TECHNIQUE: ClassVar[List[str]] = ["xas", "operando"]
+    DEFAULT_TECHNIQUE: ClassVar[List[str]] = ["xas", "in_situ"]
     INSTRUMENT_NAME: ClassVar[str] = "CLAESS"
     DEFAULT_COLUMNS: ClassVar[List[str]] = [
         "energyc",
@@ -45,7 +45,7 @@ class CLAESSReader(HasTraits):
 
     # --- Loader Metadata ---
     supports_directories: ClassVar[bool] = True
-    instrument: ClassVar[str] = "claess"
+    instrument: ClassVar[str] = "alba_claess"
 
     # --- Traitlets ---
     filepath = Unicode()
@@ -123,7 +123,6 @@ class CLAESSReader(HasTraits):
         data.attrs.update({
             "file_name": [path.stem],
             "n_files": n_records,
-            "structure": "Dataset" if isinstance(data, xr.Dataset) else "DataTree",
         })
 
         # Add units and long names if it's a Dataset
@@ -136,7 +135,7 @@ class CLAESSReader(HasTraits):
             instrument=self.instrument,
             start_time=metadata.get("start_time"),
             others={
-                "file_path": str(path),
+                "sample_names": [self.sample_name or path.stem],
                 "n_files": n_records,
             },
         )
@@ -564,7 +563,6 @@ class CLAESSReader(HasTraits):
         tree.attrs = {
             "file_name": [info.sample_name for info in all_infos],
             "n_files": root_info.get("n_files"),
-            "structure": "DataTree",
         }
         return RawData(data=tree), root_info
 
@@ -576,16 +574,23 @@ class CLAESSReader(HasTraits):
         base = infos[0]
         all_techs = set()
         total_files = 0
+        sample_names = []
+
         for info in infos:
             for t in info.technique:
                 all_techs.add(t)
             n = info.get("n_files")
             total_files += n if n is not None else 1
+            sample_names.append(info.sample_name)
 
         return RawDataInfo(
             sample_name=self.sample_name or root_path.name,
             technique=list(all_techs),
             instrument=base.instrument,
             start_time=base.start_time,
-            others={"n_files": total_files, "root_path": str(root_path), "structure": "DataTree" if total_files > 1 else "Dataset"},
+            others={
+                "n_files": total_files,
+                "root_path": str(root_path),
+                "sample_names": sample_names,
+            },
         )
