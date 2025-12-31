@@ -267,7 +267,7 @@ class BiologicMPTReader(HasTraits):
             operator=self.operator or cleaned_metadata.get("operator"),
             technique=self.technique if self.technique != self.DEFAULT_TECHNIQUE else tech_list,
             instrument=self.instrument,
-            active_material_mass=str(mass) if mass is not None else None,
+            active_material_mass=self.active_material_mass or cleaned_metadata.get("active_material_mass"),
             wave_number=self.wave_number,
             others=cleaned_metadata,
         )
@@ -300,7 +300,7 @@ class BiologicMPTReader(HasTraits):
         if is_peis:
             ordered_cols = ["cycle number", "freq/Hz", "Re(Z)/Ohm", "-Im(Z)/Ohm", "|Z|/Ohm", "Phase(Z)/deg"]
         elif is_gpcl:
-            ordered_cols = ["time/s", "systime", "cycle number", "Ewe/V", "Ece/V", "voltage/V", "I/mA", "Capacity/mA.h", "SpeCap_cal/mAh/g"]
+            ordered_cols = ["time/s", "systime", "cycle number", "Ewe/V", "Ece/V", "voltage/V", "SpeCap_cal/mAh/g", "I/mA", "Capacity/mA.h"]
         elif is_ocv:
             ordered_cols = ["time/s", "systime", "cycle number", "Ewe/V", "Ece/V", "voltage/V"]
         else:
@@ -315,7 +315,7 @@ class BiologicMPTReader(HasTraits):
         coords.update(extra_coords)
 
         # Final dataset with ordered columns
-        ds = xr.Dataset({k: v for k, v in data_vars.items() if k in ordered_cols}, coords=coords)
+        ds = xr.Dataset({k: data_vars[k] for k in ordered_cols if k in data_vars}, coords=coords)
         self._apply_standard_attrs(ds)
         return ds
 
@@ -325,14 +325,23 @@ class BiologicMPTReader(HasTraits):
         extra_vars: Dict[str, Any] = {}
         extra_coords: Dict[str, Any] = {}
         names = mpt_array.dtype.names or []
+        n_records = len(mpt_array)
 
         # Voltage
-        ewe = mpt_array["Ewe/V"] if "Ewe/V" in names else None
-        ece = mpt_array["Ece/V"] if "Ece/V" in names else None
-        if ewe is not None and ece is not None:
-            extra_vars["voltage/V"] = (["record"], ewe - ece)
-        elif ewe is not None:
-            extra_vars["voltage/V"] = (["record"], ewe)
+        # Ensure Ewe/V and Ece/V exist (set to 0 if missing as requested)
+        if "Ewe/V" in names:
+            ewe = mpt_array["Ewe/V"]
+        else:
+            ewe = np.zeros(n_records)
+            extra_vars["Ewe/V"] = (["record"], ewe)
+
+        if "Ece/V" in names:
+            ece = mpt_array["Ece/V"]
+        else:
+            ece = np.zeros(n_records)
+            extra_vars["Ece/V"] = (["record"], ece)
+
+        extra_vars["voltage/V"] = (["record"], ewe - ece)
 
         # Time
         acq_start = metadata.get("file_info", {}).get("Acquisition started on", "")
@@ -353,6 +362,7 @@ class BiologicMPTReader(HasTraits):
         attr_map = {
             "time/s": {"units": "s", "long_name": "Time"},
             "Ewe/V": {"units": "V", "long_name": "Working Electrode Potential"},
+            "Ece/V": {"units": "V", "long_name": "Counter Electrode Potential"},
             "I/mA": {"units": "mA", "long_name": "Current"},
             "voltage/V": {"units": "V", "long_name": "Cell Voltage"},
             "Capacity/mA.h": {"units": "mAh", "long_name": "Capacity"},
@@ -375,12 +385,27 @@ class BiologicMPTReader(HasTraits):
         infos = []
 
         for f in mpt_files:
-            with contextlib.suppress(Exception):
+            try:
                 raw_data, raw_info = self._load_single_file(f)
                 ds = cast(xr.Dataset, raw_data.data)
 
-                # Sanitize for DataTree
-                rename_dict = {str(v): str(v).replace("/", "_") for v in ds.data_vars if "/" in str(v)}
+                # Sanitize for DataTree (no '/' allowed in variable names)
+                # Build rename dict and drop conflicting variables
+                rename_dict = {}
+                vars_to_drop = []
+                for v in ds.data_vars:
+                    v_str = str(v)
+                    if "/" in v_str:
+                        new_name = v_str.replace("/", "_")
+                        # Check if the new name already exists
+                        if new_name not in ds:
+                            rename_dict[v_str] = new_name
+                        else:
+                            # Drop the original variable with "/" since standardized version exists
+                            vars_to_drop.append(v_str)
+
+                if vars_to_drop:
+                    ds = ds.drop_vars(vars_to_drop)
                 if rename_dict:
                     ds = ds.rename(rename_dict)
 
@@ -388,6 +413,9 @@ class BiologicMPTReader(HasTraits):
                 node_path = "/" + "/".join(rel_path.parts)
                 tree_dict[node_path] = ds
                 infos.append(raw_info)
+            except Exception as e:
+                logger.warning(f"Failed to load {f}: {e}")
+                continue
 
         if not tree_dict:
             raise RuntimeError(f"Failed to load any .mpt files from {path}")
@@ -397,16 +425,56 @@ class BiologicMPTReader(HasTraits):
         return RawData(data=tree), merged_info
 
     def _merge_infos(self, infos: List[RawDataInfo], root_path: Path) -> RawDataInfo:
-        """Merge multiple RawDataInfo objects."""
+        """Merge multiple RawDataInfo objects.
+        
+        Combines metadata from multiple files, storing unique values in lists.
+        Removes duplicates from each field.
+        """
         if not infos:
             return RawDataInfo()
 
-        all_techs = {t for info in infos for t in info.technique}
+        # Collect techniques from all files
+        # 'echem' is kept unique, other techniques can repeat (one per file)
+        all_techs = []
+        seen_echem = False
+        for info in infos:
+            for tech in info.technique:
+                if tech.lower() == 'echem':
+                    if not seen_echem:
+                        all_techs.append(tech)
+                        seen_echem = True
+                else:
+                    all_techs.append(tech)
+        
+        # Collect unique values for each field
+        sample_names = sorted({info.sample_name for info in infos if info.sample_name})
+        operators = sorted({info.operator for info in infos if info.operator})
+        start_times = sorted({info.start_time for info in infos if info.start_time})
+        masses = sorted({info.active_material_mass for info in infos if info.active_material_mass})
+        wave_numbers = sorted({info.wave_number for info in infos if info.wave_number})
+        
+        # Build combined others dict with all unique metadata
+        combined_others = {
+            "n_files": len(infos),
+            # Always store all sample names as a list for folder loading
+            "sample_names": sample_names,
+        }
+        
+        # Add list versions of other metadata if multiple unique values exist
+        if len(operators) > 1:
+            combined_others["all_operators"] = operators
+        if len(masses) > 1:
+            combined_others["all_active_material_masses"] = masses
+        
         return RawDataInfo(
-            sample_name=self.sample_name or root_path.name,
-            technique=list(all_techs),
+            sample_name=self.sample_name or root_path.name,  # Use folder name as primary sample_name
+            technique=all_techs,
             instrument=self.instrument,
-            others={"n_files": len(infos), "structure": "DataTree"},
+            operator=self.operator or (operators[0] if len(operators) == 1 else None),
+            start_time=self.start_time or (start_times[0] if len(start_times) == 1 else None),
+            active_material_mass=self.active_material_mass or (masses[0] if len(masses) == 1 else None),
+            wave_number=self.wave_number or (wave_numbers[0] if len(wave_numbers) == 1 else None),
+            others=combined_others,
         )
 
     def _detect_techniques(self, cleaned_metadata: Dict, mpt_array: np.ndarray) -> List[str]:

@@ -92,6 +92,10 @@ def load(
 
     pm = get_plugin_manager()
 
+    # For directory loading, instrument or fmt must be specified
+    if path.is_dir() and not instrument and not fmt:
+        raise ValueError(f"Loading a directory requires specifying 'instrument' or 'fmt'. Path: {path}")
+
     # If it's a directory and no extension is provided, we need to find a loader by instrument
     if path.is_dir() and not ext and instrument:
         # Search all extensions for this instrument

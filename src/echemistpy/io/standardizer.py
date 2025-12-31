@@ -27,6 +27,21 @@ class DataStandardizer(HasTraits):
     techniques = List(Unicode(), help="List of technique identifiers (e.g., ['echem', 'peis'])")
     instrument = Unicode(None, allow_none=True, help="The instrument identifier")
 
+    # Preferred column order for different techniques
+    PREFERRED_ORDER: ClassVar[dict[str, list[str]]] = {
+        "echem": [
+            "time_s",
+            "systime",
+            "cycle_number",
+            "ewe_v",
+            "ece_v",
+            "voltage_v",
+            "current_ma",
+            "capacity_mah",
+            "specific_capacity_cal_mah_g",
+        ]
+    }
+
     # Standard column name mappings for different techniques
     STANDARD_MAPPINGS: ClassVar[dict[str, dict[str, str]]] = {
         "echem": {
@@ -72,7 +87,9 @@ class DataStandardizer(HasTraits):
             "E": "ewe_v",
             "Ewe": "ewe_v",
             "Ewe/V": "ewe_v",
+            "Ewe_V": "ewe_v",
             "Ece/V": "ece_v",
+            "Ece_V": "ece_v",
             "potential_V": "ewe_v",
             "voltage_v": "ewe_v",
             "Potential/V": "ewe_v",
@@ -83,15 +100,15 @@ class DataStandardizer(HasTraits):
             "V": "voltage_v",
             "voltage_V": "voltage_v",
             "Voltage_V": "voltage_v",
+            "voltage/V": "voltage_v",
+            "Voltage/V": "voltage_v",
             "battery_voltage": "voltage_v",
             "Battery_Voltage": "voltage_v",
             "V_batt": "voltage_v",
             "Vbatt": "voltage_v",
             "cell_voltage": "voltage_v",
             "Cell_Voltage": "voltage_v",
-            "voltage/V": "voltage_v",
             "Voltage/V": "voltage_v",
-            "voltage_v": "voltage_v",
             # Current variants
             "current": "current_ma",
             "Current": "current_ma",
@@ -101,6 +118,7 @@ class DataStandardizer(HasTraits):
             "Current_mA": "current_ma",
             "I_mA": "current_ma",
             "<I>/mA": "current_ma",
+            "<I>_mA": "current_ma",
             "I/mA": "current_ma",
             "Current/mA": "current_ma",
             "control/V/mA": "current_ma",
@@ -133,24 +151,29 @@ class DataStandardizer(HasTraits):
             "SpeCap_cal/mAh/g": "specific_capacity_cal_mah_g",
             "SpeCap_cal_mAh_g": "specific_capacity_cal_mah_g",
             "SpeCap_cal/mA.h/g": "specific_capacity_cal_mah_g",
+            "SpeCap_cal_mA.h_g": "specific_capacity_cal_mah_g",
             "Capacity_mA.h": "capacity_mah",
-            "SpeCap_cal_mAh_g": "specific_capacity_cal_mah_g",
             # EIS variants
             "freq/Hz": "frequency_hz",
+            "freq_Hz": "frequency_hz",  # After sanitization
             "Freq_Hz": "frequency_hz",
             "frequency": "frequency_hz",
             "Frequency": "frequency_hz",
             "Re(Z)/Ohm": "re_z_ohm",
+            "Re(Z)_Ohm": "re_z_ohm",  # After sanitization
             "Re_Z_Ohm": "re_z_ohm",
             "Z'": "re_z_ohm",
             "Z_real": "re_z_ohm",
             "-Im(Z)/Ohm": "-im_z_ohm",
+            "-Im(Z)_Ohm": "-im_z_ohm",  # After sanitization
             "-Im_Z_Ohm": "-im_z_ohm",
             "Z''": "-im_z_ohm",
             "Z_imag": "-im_z_ohm",
             "|Z|/Ohm": "z_mag_ohm",
+            "|Z|_Ohm": "z_mag_ohm",  # After sanitization
             "Z_mag": "z_mag_ohm",
             "Phase(Z)/deg": "phase_deg",
+            "Phase(Z)_deg": "phase_deg",  # After sanitization
             "Phase_Z_deg": "phase_deg",
             "phase": "phase_deg",
             "Phase": "phase_deg",
@@ -295,6 +318,34 @@ class DataStandardizer(HasTraits):
             # We already checked for conflicts above, but let's be careful
             self.dataset = self.dataset.rename(rename_dict)
 
+        # Reorder variables if a preferred order exists for the technique
+        for tech in self.techniques:
+            tech_category = tech
+            if tech in {
+                "cv",
+                "gcd",
+                "eis",
+                "ca",
+                "cp",
+                "lsjv",
+                "echem",
+                "ec",
+                "peis",
+                "gpcl",
+                "ocv",
+            }:
+                tech_category = "echem"
+
+            if tech_category in self.PREFERRED_ORDER:
+                preferred = self.PREFERRED_ORDER[tech_category]
+                # Get existing variables in preferred order
+                existing_vars = [v for v in preferred if v in self.dataset.data_vars]
+                # Add any other variables that are not in preferred list
+                other_vars = [v for v in self.dataset.data_vars if v not in preferred]
+                # Reorder
+                self.dataset = self.dataset[existing_vars + other_vars]
+                break
+
         return self
 
     def standardize_units(self) -> "DataStandardizer":
@@ -425,7 +476,22 @@ def standardize_names(
 
             standardized_ds = s.get_dataset()
             # Sanitize names for DataTree compatibility (no '/' allowed)
-            rename_dict = {str(var): str(var).replace("/", "_") for var in standardized_ds.data_vars if "/" in str(var)}
+            # Build rename dict and drop conflicting variables
+            rename_dict = {}
+            vars_to_drop = []
+            for var in standardized_ds.data_vars:
+                var_str = str(var)
+                if "/" in var_str:
+                    new_name = var_str.replace("/", "_")
+                    # Check if the new name already exists (from standardization)
+                    if new_name not in standardized_ds:
+                        rename_dict[var_str] = new_name
+                    else:
+                        # Drop the original variable with "/" since standardized version exists
+                        vars_to_drop.append(var_str)
+            
+            if vars_to_drop:
+                standardized_ds = standardized_ds.drop_vars(vars_to_drop)
             if rename_dict:
                 standardized_ds = standardized_ds.rename(rename_dict)
 
