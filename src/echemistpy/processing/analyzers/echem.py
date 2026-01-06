@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-import contextlib
 import warnings
-from typing import Any, Dict
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -12,7 +11,7 @@ import xarray as xr
 from traitlets import Bool, Float, Unicode
 from traitlets import List as TList
 
-from echemistpy.io.structures import RawData
+from echemistpy.io.structures import AnalysisData, AnalysisDataInfo, RawData
 
 from .registry import TechniqueAnalyzer
 
@@ -25,19 +24,63 @@ class GalvanostaticAnalyzer(TechniqueAnalyzer):
     """
 
     technique = Unicode("echem", help="Technique identifier")
-    supported_techniques = TList(Unicode(), default_value=["echem", "gpcl", "gcd"], help="List of supported technique identifiers")
+    supported_techniques = TList(
+        Unicode(),
+        default_value=["echem", "gpcl", "gcd"],
+        help="List of supported technique identifiers",
+    )
 
     # 数据列配置
-    time_columns = TList(Unicode(), default_value=["time_s", "systime"], help="Candidate time column names in order of preference")
-    potential_columns = TList(Unicode(), default_value=["ewe_v", "voltage_v"], help="Candidate potential/voltage column names in order of preference")
-    current_columns = TList(Unicode(), default_value=["current_ma", "current_ua"], help="Candidate current column names in order of preference")
+    time_columns = TList(
+        Unicode(),
+        default_value=["time_s", "systime"],
+        help="Candidate time column names in order of preference",
+    )
+    potential_columns = TList(
+        Unicode(),
+        default_value=["ewe_v", "voltage_v", "ece_v"],
+        help="Candidate potential/voltage column names in order of preference",
+    )
+    current_columns = TList(
+        Unicode(),
+        default_value=["current_ma", "current_ua"],
+        help="Candidate current column names in order of preference",
+    )
+    capacity_columns = TList(
+        Unicode(),
+        default_value=["capacity_mah", "capacity_uah", "specific_capacity_mah_g"],
+        help="Candidate capacity column names in order of preference",
+    )
 
     # 分析选项
-    calculate_ce = Bool(True, help="Whether to calculate coulombic efficiency if cycle_number is present")
-    baseline_correct = Bool(True, help="Whether to compute baseline-corrected potential")
+    calculate_ce = Bool(
+        True,
+        help="Whether to calculate coulombic efficiency if cycle_number is present",
+    )
+    ce_order = Unicode(
+        "discharge",
+        help="Order of CE calculation: 'discharge' (CE=discharge/charge, first negative current as first cycle) or 'charge' (CE=charge/discharge, first positive current as first cycle)",
+    )
 
     # 电荷容量计算参数
-    time_unit_conversion = Float(3600.0, help="Conversion factor from time unit to hours (default: 3600 for seconds to hours)")
+    # 默认值 3600 用于将秒转换为小时 (mAh = mA * s / 3600)
+    time_unit_conversion = Float(
+        3600.0,
+        help="Conversion factor from time unit to hours (default: 3600 for seconds to hours)",
+    )
+
+    # 库伦效率计算参数
+    ce_min_charge_threshold = Float(
+        1e-6,
+        help="Minimum charge capacity (mAh) to consider CE calculation valid (avoid division by zero)",
+    )
+
+    # 归一化范围参数
+    normalization_range = TList(
+        Float(),
+        default_value=[0.0, 1.0],
+        help="Normalization range for time/capacity sequences [min, max]",
+    )
 
     @staticmethod
     def _pick(ds: xr.Dataset, candidates: list[str]) -> str | None:
@@ -53,9 +96,9 @@ class GalvanostaticAnalyzer(TechniqueAnalyzer):
             第一个找到的列名, 如果都不存在则返回 None
         """
         available = set(ds.data_vars) | set(ds.coords)
-        for c in candidates:
-            if c in available:
-                return c
+        for col in candidates:
+            if col in available:
+                return col
         return None
 
     @staticmethod
@@ -70,6 +113,48 @@ class GalvanostaticAnalyzer(TechniqueAnalyzer):
         """
         # 在运行时, TList 就是 list, 但类型检查器需要显式转换
         return list(trait_list) if trait_list else []
+
+    @property
+    def required_columns(self) -> tuple[str, ...]:
+        """返回必需的数据列.
+
+        对于恒流分析器，动态查找可用的时间、电位和电流列。
+        """
+        # 恒流分析器的必需列（至少需要一个时间列、一个电位列、一个电流列）
+        # 但由于列名可能不同，实际验证在 validate 中进行
+        return ()
+
+    @staticmethod
+    def _get_numeric_time(time_array: np.ndarray) -> np.ndarray:
+        """将时间数组转换为数值型 (秒).
+
+        支持两种输入:
+        1. datetime64 类型: 转换为相对于第一个时间点的秒数
+        2. 数值类型: 直接返回浮点数数组
+
+        Args:
+            time_array: 时间数组, 可能是 datetime64 或数值类型
+
+        Returns:
+            数值型时间数组 (单位: 秒)
+
+        Examples:
+            >>> import numpy as np
+            >>> import pandas as pd
+            >>> # datetime64 输入
+            >>> times = pd.date_range("2024-01-01", periods=3, freq="1s").to_numpy()
+            >>> GalvanostaticAnalyzer._get_numeric_time(times)
+            array([0., 1., 2.])
+
+            >>> # 数值输入
+            >>> GalvanostaticAnalyzer._get_numeric_time(np.array([1.5, 2.5, 3.5]))
+            array([1.5, 2.5, 3.5])
+        """
+        if np.issubdtype(getattr(time_array, "dtype", object), np.datetime64):
+            t_pd = pd.to_datetime(time_array)
+            return (t_pd - t_pd[0]).total_seconds().to_numpy()
+        else:
+            return np.asarray(time_array, dtype=float)
 
     def validate(self, raw_data: RawData) -> None:
         """验证数据是否适合此分析器.
@@ -102,13 +187,22 @@ class GalvanostaticAnalyzer(TechniqueAnalyzer):
             raise ValueError(f"数据包含不支持的技术标识符: {invalid_techniques}. 除 'echem' 外, 仅支持: {list(allowed_others)}")
 
     def preprocess(self, raw_data: RawData) -> RawData:
-        """按时间排序并计算基线校正的电位."""
+        """按时间排序并添加数值型时间坐标.
+
+        Args:
+            raw_data: 原始数据容器
+
+        Returns:
+            预处理后的数据容器, 包含数值型时间坐标
+
+        Raises:
+            ValueError: 如果缺少必需的数据列
+        """
+        ds = raw_data.data
         if raw_data.is_tree:
             ds = raw_data.data.dataset
             if ds is None:
                 raise ValueError("DataTree has no root dataset for galvanostatic analysis.")
-        else:
-            ds = raw_data.data
 
         # 使用 traitlets 配置的列名
         time_key = self._pick(ds, self._get_column_candidates(self.time_columns))
@@ -116,43 +210,31 @@ class GalvanostaticAnalyzer(TechniqueAnalyzer):
         cur_key = self._pick(ds, self._get_column_candidates(self.current_columns))
 
         if time_key is None:
-            raise ValueError(f"No time column found. Searched for: {self.time_columns}")
+            raise ValueError(f"No time column found. Searched for: {self._get_column_candidates(self.time_columns)}")
         if pot_key is None:
-            raise ValueError(f"No potential/voltage column found. Searched for: {self.potential_columns}")
+            raise ValueError(f"No potential/voltage column found. Searched for: {self._get_column_candidates(self.potential_columns)}")
         if cur_key is None:
-            raise ValueError(f"No current column found. Searched for: {self.current_columns}")
+            raise ValueError(f"No current column found. Searched for: {self._get_column_candidates(self.current_columns)}")
 
-        # 按时间排序
-        with contextlib.suppress(Exception):
-            ds = ds.sortby(time_key)
+        # 按时间排序 (如果时间列不是单调的)
+        try:
+            time_vals = ds[time_key].values
+            if not (np.all(np.diff(time_vals) >= 0) or np.all(np.diff(time_vals) <= 0)):
+                ds = ds.sortby(time_key)
+        except (TypeError, ValueError, KeyError):
+            # 如果排序失败 (例如非可排序类型), 继续使用原始顺序
+            pass
 
         dim = ds[cur_key].dims[0]
 
-        # 提取数值型时间数组
-        t_vals = ds[time_key].values
-        if np.issubdtype(getattr(t_vals, "dtype", object), np.datetime64):
-            t_pd = pd.to_datetime(t_vals)
-            t_numeric = (t_pd - t_pd[0]).total_seconds()
-        else:
-            try:
-                t_numeric = np.asarray(t_vals, dtype=float)
-            except Exception:
-                t_numeric = np.arange(ds.sizes[dim], dtype=float)
-
-        # 基线校正电位 (如果启用)
-        if self.baseline_correct:
-            potential_vals = ds[pot_key].values
-            # 以初始值为参考, 突出变化
-            ref = float(potential_vals[0]) if getattr(potential_vals, "size", 0) else 0.0
-            baseline_corrected = potential_vals - ref
-            raw_data.data = ds.assign(**{"baseline_corrected_potential": (dim, baseline_corrected)})
-        else:
-            raw_data.data = ds
+        # 使用公共方法提取数值型时间数组
+        t_numeric = self._get_numeric_time(ds[time_key].values)
 
         # 如果不存在 time_s 坐标, 则存储数值型时间
-        if "time_s" not in raw_data.data.coords:
-            raw_data.data = raw_data.data.assign_coords(time_s=(dim, t_numeric))
+        if "time_s" not in ds.coords:
+            ds = ds.assign_coords(time_s=(dim, t_numeric))
 
+        raw_data.data = ds
         return raw_data
 
     @staticmethod
@@ -172,137 +254,346 @@ class GalvanostaticAnalyzer(TechniqueAnalyzer):
         unique_cycles = np.unique(cycle_numbers)
 
         cycles = {}
+        # 获取主维度名称（第一个维度）
+        main_dim = list(ds.sizes.keys())[0]
         for cycle_id in unique_cycles:
             cycle_int = int(cycle_id)
             mask = cycle_numbers == cycle_id
-            cycles[cycle_int] = ds.isel({ds.dims[0]: mask})
+            cycles[cycle_int] = ds.isel({main_dim: mask})
 
         return cycles
 
-    def calc_CE(self, ds: xr.Dataset) -> pd.DataFrame:  # noqa: N802
+    def _calculate_ce(self, ds: xr.Dataset) -> pd.DataFrame:
         """计算每个循环的库伦效率.
 
-        根据电流方向判断充电和放电过程, 计算库伦效率 = 放电容量 / 充电容量 * 100%
+        根据电流方向判断充电和放电过程，根据 ce_order 参数计算库伦效率：
+        - ce_order='discharge': CE = 放电容量 / 充电容量 * 100% (首圈从负电流开始)
+        - ce_order='charge': CE = 充电容量 / 放电容量 * 100% (首圈从正电流开始)
 
         Args:
             ds: 包含 cycle_number, current_ma 和 time_s 的数据集
 
         Returns:
             DataFrame, 包含每个循环的充电容量, 放电容量和库伦效率
+
+        Raises:
+            ValueError: 如果缺少必需的列或 ce_order 值无效
         """
+        if self.ce_order not in ["discharge", "charge"]:
+            raise ValueError(f"ce_order 必须是 'discharge' 或 'charge', 但得到: {self.ce_order}")
         if "cycle_number" not in ds.coords and "cycle_number" not in ds.data_vars:
             raise ValueError("数据集中未找到 cycle_number 列")
 
-        # 使用 traitlets 配置的列名查找
-        cur_candidates = self._get_column_candidates(self.current_columns)
-        cur_key = self._pick(ds, cur_candidates)
-        if cur_key is None:
-            raise ValueError(f"未找到电流列. 搜索了: {cur_candidates}")
-
-        time_candidates = self._get_column_candidates(self.time_columns)
-        time_key = self._pick(ds, time_candidates)
-        if time_key is None:
-            raise ValueError(f"未找到时间列. 搜索了: {time_candidates}")
+        # 尝试查找容量列
+        cap_candidates = self._get_column_candidates(self.capacity_columns)
+        cap_key = self._pick(ds, cap_candidates)
 
         # 按循环分割
         cycles = self.split_by_cycle(ds)
 
         results = []
-        for cycle_num, cycle_ds in cycles.items():
-            current = cycle_ds[cur_key].values
 
-            # 获取时间
-            time = cycle_ds[time_key].values
-            if np.issubdtype(getattr(time, "dtype", object), np.datetime64):
-                t_pd = pd.to_datetime(time)
-                time_numeric = (t_pd - t_pd[0]).total_seconds()
-            else:
-                time_numeric = np.asarray(time, dtype=float)
+        # 如果找到容量列，直接使用原始容量数据
+        if cap_key is not None:
+            # 还需要电流列来判断充放电阶段
+            cur_candidates = self._get_column_candidates(self.current_columns)
+            cur_key = self._pick(ds, cur_candidates)
+            if cur_key is None:
+                raise ValueError(f"找到容量列但未找到电流列，无法判断充放电阶段. 电流列搜索了: {cur_candidates}")
 
-            dt = np.gradient(time_numeric)
+            for cycle_num, cycle_ds in cycles.items():
+                capacity_vals = cycle_ds[cap_key].values
+                current_vals = cycle_ds[cur_key].values
 
-            # 计算电荷量, 使用配置的时间单位转换
-            # mAh = mA * h = mA * s / time_unit_conversion
-            charge = current * dt / self.time_unit_conversion
+                # 根据电流正负判断充放电阶段
+                # 充电阶段：电流 > 0，放电阶段：电流 < 0
+                charge_mask = current_vals > 0
+                discharge_mask = current_vals < 0
 
-            # 充电为正电流, 放电为负电流 (根据实际情况可能需要调整符号)
-            charge_capacity = np.sum(charge[charge > 0])  # 充电容量
-            discharge_capacity = np.abs(np.sum(charge[charge < 0]))  # 放电容量
+                # 计算充电容量：充电阶段的容量变化（末值 - 初值）
+                if np.any(charge_mask):
+                    charge_indices = np.where(charge_mask)[0]
+                    charge_capacity_cal = float(capacity_vals[charge_indices[-1]] - capacity_vals[charge_indices[0]])
+                else:
+                    charge_capacity_cal = 0.0
 
-            # 库伦效率
-            coulombic_eff = (discharge_capacity / charge_capacity) * 100 if charge_capacity > 0 else 0.0
+                # 计算放电容量：放电阶段的容量变化的绝对值（|末值 - 初值|）
+                if np.any(discharge_mask):
+                    discharge_indices = np.where(discharge_mask)[0]
+                    discharge_capacity_cal = float(np.abs(capacity_vals[discharge_indices[-1]] - capacity_vals[discharge_indices[0]]))
+                else:
+                    discharge_capacity_cal = 0.0
 
-            results.append({
-                "cycle_number": cycle_num,
-                "charge_capacity_mah": charge_capacity,
-                "discharge_capacity_mah": discharge_capacity,
-                "coulombic_efficiency_%": coulombic_eff,
-            })
+                # 库伦效率: 根据 ce_order 选择计算方式
+                if self.ce_order == "discharge":
+                    # CE = 放电 / 充电
+                    denominator = charge_capacity_cal
+                    numerator = discharge_capacity_cal
+                    threshold_name = "充电容量"
+                else:  # charge
+                    # CE = 充电 / 放电
+                    denominator = discharge_capacity_cal
+                    numerator = charge_capacity_cal
+                    threshold_name = "放电容量"
+
+                if denominator > self.ce_min_charge_threshold:
+                    coulombic_eff = (numerator / denominator) * 100
+                else:
+                    coulombic_eff = float("nan")
+                    warnings.warn(
+                        f"循环 {cycle_num} 的{threshold_name} ({denominator:.6f} mAh) 低于阈值 ({self.ce_min_charge_threshold} mAh), 库伦效率设为 NaN",
+                        stacklevel=2,
+                    )
+
+                results.append({
+                    "cycle_number": cycle_num,
+                    "charge_capacity_cal": charge_capacity_cal,
+                    "discharge_capacity_cal": discharge_capacity_cal,
+                    "coulombic_efficiency_%": coulombic_eff,
+                })
+        else:
+            # 如果没有容量列，通过电流和时间积分计算
+            cur_candidates = self._get_column_candidates(self.current_columns)
+            cur_key = self._pick(ds, cur_candidates)
+            if cur_key is None:
+                raise ValueError(f"未找到容量列也未找到电流列. 容量列搜索了: {cap_candidates}, 电流列搜索了: {cur_candidates}")
+
+            time_candidates = self._get_column_candidates(self.time_columns)
+            time_key = self._pick(ds, time_candidates)
+            if time_key is None:
+                raise ValueError(f"未找到时间列. 搜索了: {time_candidates}")
+
+            for cycle_num, cycle_ds in cycles.items():
+                current = cycle_ds[cur_key].values
+
+                # 使用公共方法获取数值型时间
+                time_numeric = self._get_numeric_time(cycle_ds[time_key].values)
+                dt = np.gradient(time_numeric)
+
+                # 计算电荷量, 使用配置的时间单位转换
+                # mAh = mA * h = mA * s / time_unit_conversion
+                charge = current * dt / self.time_unit_conversion
+
+                # 充电为正电流, 放电为负电流 (根据实际情况可能需要调整符号)
+                charge_capacity_cal = float(np.sum(charge[charge > 0]))  # 充电容量
+                discharge_capacity_cal = float(np.abs(np.sum(charge[charge < 0])))  # 放电容量
+
+                # 库伦效率: 根据 ce_order 选择计算方式
+                if self.ce_order == "discharge":
+                    # CE = 放电 / 充电
+                    denominator = charge_capacity_cal
+                    numerator = discharge_capacity_cal
+                    threshold_name = "充电容量"
+                else:  # charge
+                    # CE = 充电 / 放电
+                    denominator = discharge_capacity_cal
+                    numerator = charge_capacity_cal
+                    threshold_name = "放电容量"
+
+                if denominator > self.ce_min_charge_threshold:
+                    coulombic_eff = (numerator / denominator) * 100
+                else:
+                    coulombic_eff = float("nan")
+                    warnings.warn(
+                        f"循环 {cycle_num} 的{threshold_name} ({denominator:.6f} mAh) 低于阈值 ({self.ce_min_charge_threshold} mAh), 库伦效率设为 NaN",
+                        stacklevel=2,
+                    )
+
+                results.append({
+                    "cycle_number": cycle_num,
+                    "charge_capacity_cal": charge_capacity_cal,
+                    "discharge_capacity_cal": discharge_capacity_cal,
+                    "coulombic_efficiency_%": coulombic_eff,
+                })
 
         return pd.DataFrame(results)
 
-    def compute(self, raw_data: RawData) -> tuple[Dict[str, Any], Dict[str, xr.Dataset]]:
-        """计算累计电荷 (容量) 和电位统计."""
+    def compute(self, raw_data: RawData) -> tuple[AnalysisData, AnalysisDataInfo]:
+        """计算累计电荷(容量)、电位统计和库伦效率.
+
+        此函数：
+        1. 提取和验证数据：查找时间、电位、电流、容量列
+        2. 归一化处理：对时间/容量序列进行归一化，范围可配置
+        3. 库伦效率计算：如果启用且存在 cycle_number
+
+        Args:
+            raw_data: 原始数据容器
+
+        Returns:
+            (AnalysisData, AnalysisDataInfo) 元组:
+            - AnalysisData: 包含分析结果的数据集
+            - AnalysisDataInfo: 分析过程的参数和元数据
+        """
         ds = raw_data.data
         if isinstance(ds, xr.DataTree):
             ds = ds.dataset
             if ds is None:
                 raise ValueError("DataTree has no root dataset for galvanostatic analysis.")
 
-        # 使用 traitlets 配置的列名
+        # 1. 提取和验证数据 - 查找时间、电位、电流、容量列
         time_key = self._pick(ds, self._get_column_candidates(self.time_columns)) or "time_s"
-        pot_candidates = [*self._get_column_candidates(self.potential_columns), "baseline_corrected_potential"]
-        pot_key = self._pick(ds, pot_candidates) or "baseline_corrected_potential"
+        pot_key = self._pick(ds, self._get_column_candidates(self.potential_columns))
         cur_key = self._pick(ds, self._get_column_candidates(self.current_columns)) or next(iter(ds.data_vars))
+        cap_key = self._pick(ds, self._get_column_candidates(self.capacity_columns))
+
+        # 记录使用的列名
+        used_columns = {
+            "time_column": time_key,
+            "potential_column": pot_key,
+            "current_column": cur_key,
+            "capacity_column": cap_key,
+        }
 
         # 时间数组
         time = ds.coords[time_key].values if time_key in ds.coords else ds[time_key].values
-
-        potential = ds[pot_key].values
+        potential = ds[pot_key].values if pot_key else np.array([])
         current = ds[cur_key].values
+        capacity = ds[cap_key].values if cap_key else None
 
         dim = ds[cur_key].dims[0]
 
-        # 计算时间步长
-        if np.issubdtype(getattr(time, "dtype", object), np.datetime64):
-            t_pd = pd.to_datetime(time)
-            t_numeric = (t_pd - t_pd[0]).total_seconds()
-        else:
-            t_numeric = np.asarray(time, dtype=float)
+        # 使用公共方法计算时间步长
+        t_numeric = self._get_numeric_time(time)
         dt = np.gradient(t_numeric)
 
         # 累计电荷 (电流对时间的积分)
         cumulative_charge = np.cumsum(current * dt)
 
-        # 统计信息
+        # 2. 归一化处理
+        norm_min, norm_max = self.normalization_range[0], self.normalization_range[1]
+
+        # 归一化时间
+        if t_numeric.size > 0:
+            t_min, t_max = t_numeric.min(), t_numeric.max()
+            if t_max > t_min:
+                normalized_time = norm_min + (t_numeric - t_min) / (t_max - t_min) * (norm_max - norm_min)
+            else:
+                normalized_time = np.full_like(t_numeric, norm_min)
+        else:
+            normalized_time = t_numeric
+
+        # 归一化容量（如果存在）
+        normalized_capacity = None
+        if capacity is not None and capacity.size > 0:
+            cap_min, cap_max = capacity.min(), capacity.max()
+            if cap_max > cap_min:
+                normalized_capacity = norm_min + (capacity - cap_min) / (cap_max - cap_min) * (norm_max - norm_min)
+            else:
+                normalized_capacity = np.full_like(capacity, norm_min)
+
+        # 电位统计信息
         start_potential = float(potential[0]) if potential.size else float("nan")
         end_potential = float(potential[-1]) if potential.size else float("nan")
         avg_potential = float(np.mean(potential)) if potential.size else float("nan")
         net_charge = float(cumulative_charge[-1]) if cumulative_charge.size else 0.0
 
-        # 归一化电位用于绘图
-        scale = np.max(np.abs(potential)) or 1.0
-        normalized_pot = potential / scale
-
-        table = ds.assign(
-            normalized_potential=(dim, normalized_pot),
-            cumulative_charge=(dim, cumulative_charge),
-        )
-
-        summary: Dict[str, Any] = {
-            "start_potential": start_potential,
-            "end_potential": end_potential,
-            "average_potential": avg_potential,
-            "net_charge": net_charge,
+        # 3. 库伦效率计算（如果启用且存在 cycle_number）
+        ce_results = None
+        has_cycle = "cycle_number" in ds.coords or "cycle_number" in ds.data_vars
+        
+        if self.calculate_ce and has_cycle:
+            try:
+                ce_df = self._calculate_ce(ds)
+                ce_results = ce_df.to_dict('records')
+            except Exception as e:
+                # CE 计算失败不应该影响其他分析
+                print(f"警告: 库伦效率计算失败: {e}")
+                ce_results = None
+        
+        # 检查是否有 cycle_number 用于重构为二维数据
+        if has_cycle:
+            # 按 cycle 重构为二维数据 (cycle_number, record)
+            cycles_dict = self.split_by_cycle(ds)
+            cycle_numbers = sorted(cycles_dict.keys())
+            
+            # 找到最大的 record 数
+            max_records = max(cycles_dict[c].sizes[dim] for c in cycle_numbers)
+            
+            # 准备二维数组（填充 NaN）
+            def create_2d_array(cycle_data_getter):
+                """创建二维数组，从每个 cycle 获取数据"""
+                arr = np.full((len(cycle_numbers), max_records), np.nan)
+                for i, cycle_num in enumerate(cycle_numbers):
+                    cycle_ds = cycles_dict[cycle_num]
+                    data = cycle_data_getter(cycle_ds)
+                    arr[i, :len(data)] = data
+                return arr
+            
+            # 构建二维数据变量
+            result_vars = {
+                "time_s": (["cycle_number", "record"], create_2d_array(lambda c: self._get_numeric_time(c[time_key].values if time_key in c.coords else c[time_key].values))),
+                "normalized_time": (["cycle_number", "record"], create_2d_array(lambda c: norm_min + (self._get_numeric_time(c[time_key].values if time_key in c.coords else c[time_key].values) - self._get_numeric_time(c[time_key].values if time_key in c.coords else c[time_key].values).min()) / (self._get_numeric_time(c[time_key].values if time_key in c.coords else c[time_key].values).max() - self._get_numeric_time(c[time_key].values if time_key in c.coords else c[time_key].values).min() + 1e-10) * (norm_max - norm_min))),
+            }
+            
+            if pot_key:
+                result_vars["voltage_v"] = (["cycle_number", "record"], create_2d_array(lambda c: c[pot_key].values))
+            
+            result_vars["current_ua"] = (["cycle_number", "record"], create_2d_array(lambda c: c[cur_key].values))
+            
+            if capacity is not None:
+                result_vars["capacity_uah"] = (["cycle_number", "record"], create_2d_array(lambda c: c[cap_key].values if cap_key else np.array([])))
+                if normalized_capacity is not None:
+                    # 对每个 cycle 单独归一化
+                    def norm_cap_2d(c):
+                        if cap_key and cap_key in c:
+                            cap_vals = c[cap_key].values
+                            if len(cap_vals) > 0:
+                                cap_min_c, cap_max_c = cap_vals.min(), cap_vals.max()
+                                if cap_max_c > cap_min_c:
+                                    return norm_min + (cap_vals - cap_min_c) / (cap_max_c - cap_min_c) * (norm_max - norm_min)
+                        return np.array([])
+                    result_vars["normalized_capacity"] = (["cycle_number", "record"], create_2d_array(norm_cap_2d))
+            
+            # 创建坐标
+            coords = {
+                "cycle_number": cycle_numbers,
+                "record": np.arange(max_records)
+            }
+            
+            result_ds = xr.Dataset(result_vars, coords=coords)
+            
+            # 添加库伦效率数据（如果有）
+            if ce_results is not None and len(ce_results) > 0:
+                # 提取 CE 数据为数组
+                ce_df = pd.DataFrame(ce_results)
+                # 按 cycle_number 排序并对齐
+                ce_df = ce_df.set_index('cycle_number').reindex(cycle_numbers)
+                
+                result_ds["coulombic_efficiency_%"] = (["cycle_number"], ce_df["coulombic_efficiency_%"].values)
+                result_ds["charge_capacity_cal"] = (["cycle_number"], ce_df["charge_capacity_cal"].values)
+                result_ds["discharge_capacity_cal"] = (["cycle_number"], ce_df["discharge_capacity_cal"].values)
+        else:
+            # 没有 cycle_number，保持一维结构
+            result_ds = ds.copy()
+            
+            # 添加归一化时间
+            result_ds["normalized_time"] = (dim, normalized_time)
+            
+            # 添加归一化容量（如果存在）
+            if normalized_capacity is not None:
+                result_ds["normalized_capacity"] = (dim, normalized_capacity)
+        
+        # 构建 AnalysisDataInfo - 只保留必要参数（CE数据已在 Dataset 中）
+        analysis_params = {
+            "normalization_range": list(self.normalization_range),
+            "ce_order": self.ce_order,
         }
 
-        # 如果启用库伦效率计算且存在 cycle_number
-        if self.calculate_ce and ("cycle_number" in ds.coords or "cycle_number" in ds.data_vars):
-            try:
-                coulombic_eff_df = self.calc_CE(ds)
-                summary["coulombic_efficiency"] = coulombic_eff_df.to_dict("records")
-            except Exception as e:
-                # 如果计算失败, 记录警告但不中断分析
-                warnings.warn(f"库伦效率计算失败: {e}", stacklevel=2)
+        # 从 raw_data 继承元数据（排除 others 字段）
+        info_dict = {}
+        
+        if hasattr(raw_data, "info"):
+            # 复制所有标准字段（包括 None 值）
+            for field in ["sample_name", "start_time", "operator", "instrument", 
+                          "active_material_mass", "wave_number"]:
+                value = getattr(raw_data.info, field, None)
+                info_dict[field] = value
+        
+        # 更新 technique 和 parameters（会覆盖 raw_info 中的值）
+        info_dict["technique"] = [self.technique]
+        info_dict["parameters"] = analysis_params
 
-        return summary, {"galvanostatic_trace": table}
+        analysis_info = AnalysisDataInfo(**info_dict)
+        analysis_data = AnalysisData(data=result_ds)
+
+        return analysis_data, analysis_info

@@ -305,9 +305,44 @@ class ResultsData(BaseData):
     pass
 
 
+class AnalysisDataInfo(BaseInfo):
+    """分析结果的元数据容器.
+
+    存储分析过程中的所有参数和配置，包括：
+    - 数据列选择（时间、电位、电流、容量）
+    - 归一化参数
+    - 库伦效率计算配置
+    - 其他分析参数
+
+    Attributes:
+        parameters: 分析参数字典，记录所有分析过程使用的配置
+        others: 额外的元数据
+    """
+
+    parameters = Dict(help="Dictionary of analysis parameters and configuration")
+    others = Dict(help="Additional metadata not covered by standard fields")
+
+
+class AnalysisData(BaseData):
+    """分析后的数据容器.
+
+    包含分析后的结果数据，如：
+    - 归一化后的时间/容量序列
+    - 库伦效率数据
+    - 其他计算结果
+
+    使用 xarray.Dataset 或 xarray.DataTree 存储数据，提供强大的
+    数据操作和可视化能力。分析元数据单独存储在 AnalysisDataInfo 中。
+    """
+
+    pass
+
+
 __all__ = [
     "RawData",
     "RawDataInfo",
     "ResultsData",
     "ResultsDataInfo",
+    "AnalysisData",
+    "AnalysisDataInfo",
 ]

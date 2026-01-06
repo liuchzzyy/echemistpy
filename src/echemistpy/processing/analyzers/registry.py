@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
+from abc import ABCMeta, abstractmethod
 from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
 
 import xarray as xr
-from traitlets import HasTraits, Instance, List as TList, Unicode
+from traitlets import HasTraits, Instance, List as TList, MetaHasTraits, Unicode
 
 from echemistpy.io.structures import RawData, RawDataInfo, ResultsData, ResultsDataInfo
 
@@ -14,7 +14,13 @@ if TYPE_CHECKING:
     pass
 
 
-class TechniqueAnalyzer(HasTraits, ABC):
+class ABCMetaHasTraits(ABCMeta, MetaHasTraits):
+    """Metaclass combining ABC and HasTraits metaclasses."""
+
+    pass
+
+
+class TechniqueAnalyzer(HasTraits, metaclass=ABCMetaHasTraits):
     """Template used by all built-in analyzers."""
 
     technique = Unicode(help="Technique identifier")
