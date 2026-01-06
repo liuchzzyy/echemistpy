@@ -23,20 +23,47 @@ logger = logging.getLogger(__name__)
 
 
 def sanitize_variable_names(obj: xr.Dataset | dict[str, Any]) -> xr.Dataset | dict[str, Any]:
-    """Sanitize variable names by replacing '/' with '_' for DataTree compatibility.
+    """清理变量名，将 '/' 替换为 '_' 以兼容 DataTree。
+
+    注意：如果目标名称已存在，则添加后缀以避免冲突。
 
     Args:
-        obj: xarray Dataset or dictionary to sanitize
+        obj: xarray Dataset 或字典进行清理
 
     Returns:
-        Sanitized Dataset or dictionary with '/' replaced by '_'
+        清理后的 Dataset 或字典，'/' 被替换为 '_'
     """
     if isinstance(obj, xr.Dataset):
-        rename_dict = {str(name): str(name).replace("/", "_") for name in list(obj.data_vars) + list(obj.coords) if "/" in str(name)}
+        rename_dict = {}
+        all_names = list(obj.data_vars) + list(obj.coords)
+
+        for name in all_names:
+            name_str = str(name)
+            if "/" in name_str:
+                new_name = name_str.replace("/", "_")
+                # 如果目标名称已存在，添加后缀避免冲突
+                if new_name in all_names and new_name != name_str:
+                    suffix = 1
+                    while f"{new_name}_{suffix}" in all_names:
+                        suffix += 1
+                    new_name = f"{new_name}_{suffix}"
+                if new_name != name_str:
+                    rename_dict[name_str] = new_name
+
         return obj.rename(rename_dict) if rename_dict else obj
 
     if isinstance(obj, dict):
-        return {k.replace("/", "_"): v for k, v in obj.items()}
+        result = {}
+        for k, v in obj.items():
+            new_key = k.replace("/", "_")
+            # 如果新键已存在，添加后缀避免冲突
+            if new_key in result and new_key != k:
+                suffix = 1
+                while f"{new_key}_{suffix}" in result:
+                    suffix += 1
+                new_key = f"{new_key}_{suffix}"
+            result[new_key] = v
+        return result
 
     return obj
 
