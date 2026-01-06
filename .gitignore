@@ -45,3 +45,8 @@ coverage.xml
 
 # data files
 docs/examples/
+
+# ruff cache
+.ruff_cache/
+.benchmarks/
+tests/
