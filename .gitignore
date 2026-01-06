@@ -41,6 +41,7 @@ coverage.xml
 .idea/
 .vscode/
 .DS_Store
+.claude/
 
 # data files
 docs/examples/

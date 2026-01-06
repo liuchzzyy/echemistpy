@@ -8,19 +8,20 @@ Main classes:
 Based on: https://github.com/echemdata/galvani/blob/master/galvani/BioLogic.py
 """
 
-import contextlib
+from __future__ import annotations
+
 import logging
 import re
 from datetime import datetime
 from pathlib import Path
-from typing import Any, ClassVar, Dict, List, Optional, Tuple, Union, cast
+from typing import Any, ClassVar, cast
 
 import numpy as np
 import pandas as pd
 import xarray as xr
-from traitlets import HasTraits, Unicode
-from traitlets import List as TList
 
+from echemistpy.io.base_reader import BaseReader
+from echemistpy.io.reader_utils import merge_infos, sanitize_variable_names
 from echemistpy.io.structures import RawData, RawDataInfo
 
 logger = logging.getLogger(__name__)
@@ -112,7 +113,14 @@ SPECIAL_MAPPINGS = {
 
 
 def _get_dtype_from_column_type(fieldname: str) -> Any:
-    """Helper to get dtype based on column classification."""
+    """Helper to get dtype based on column classification.
+
+    Args:
+        fieldname: Column name
+
+    Returns:
+        numpy dtype or None
+    """
     if fieldname in BOOL_COLUMNS:
         return np.bool_
     if fieldname in INT_COLUMNS:
@@ -124,8 +132,18 @@ def _get_dtype_from_column_type(fieldname: str) -> Any:
     return None
 
 
-def fieldname_to_dtype(fieldname: str) -> Tuple[str, Any]:
-    """Convert column header from MPT file to (name, dtype) tuple."""
+def fieldname_to_dtype(fieldname: str) -> tuple[str, Any]:
+    """Convert column header from MPT file to (name, dtype) tuple.
+
+    Args:
+        fieldname: Column header from MPT file
+
+    Returns:
+        Tuple of (name, dtype)
+
+    Raises:
+        ValueError: If column header is invalid
+    """
     if fieldname == "mode":
         return ("mode", np.uint8)
 
@@ -140,7 +158,15 @@ def fieldname_to_dtype(fieldname: str) -> Tuple[str, Any]:
 
 
 def _calculate_systime(acq_start: str, relative_times: np.ndarray) -> pd.Series:
-    """Calculate absolute system time from acquisition start and relative times."""
+    """Calculate absolute system time from acquisition start and relative times.
+
+    Args:
+        acq_start: Acquisition start time string
+        relative_times: Array of relative times in seconds
+
+    Returns:
+        Series of datetime objects
+    """
     try:
         # BioLogic format: MM/DD/YYYY HH:MM:SS.ffffff
         start_dt = datetime.strptime(acq_start, "%m/%d/%Y %H:%M:%S.%f")
@@ -151,8 +177,19 @@ def _calculate_systime(acq_start: str, relative_times: np.ndarray) -> pd.Series:
         return pd.Series(relative_times)
 
 
-def _read_mpt_content(mpt_file: Any, encoding: str = "latin1") -> Tuple[np.ndarray, List[bytes]]:
-    """Internal helper to read MPT content from a file object."""
+def _read_mpt_content(mpt_file: Any, encoding: str = "latin1") -> tuple[np.ndarray, list[bytes]]:
+    """Internal helper to read MPT content from a file object.
+
+    Args:
+        mpt_file: File object to read from
+        encoding: File encoding
+
+    Returns:
+        Tuple of (numpy array, comments list)
+
+    Raises:
+        ValueError: If file format is invalid
+    """
     magic = next(mpt_file).strip()
     if magic not in {b"EC-Lab ASCII FILE", b"BT-Lab ASCII FILE"}:
         raise ValueError(f"Bad first line: {magic!r}")
@@ -186,60 +223,46 @@ def _read_mpt_content(mpt_file: Any, encoding: str = "latin1") -> Tuple[np.ndarr
     def str_to_float(s: str) -> float:
         return float(s.replace(",", "."))
 
-    converter_dict: Dict[int, Any] = dict.fromkeys(range(len(fieldnames)), str_to_float)
+    converter_dict: dict[int, Any] = dict.fromkeys(range(len(fieldnames)), str_to_float)
     mpt_array = np.loadtxt(mpt_file, dtype=record_type, converters=converter_dict)  # type: ignore[arg-type]
 
     return mpt_array, comments
 
 
-# --- BiologicMPTReader Class ---
-
-
-class BiologicMPTReader(HasTraits):
+class BiologicMPTReader(BaseReader):
     """Reader for BioLogic MPT files with metadata extraction."""
 
     # --- Constants ---
     INSTRUMENT_NAME: ClassVar[str] = "BioLogic"
-    DEFAULT_TECHNIQUE: ClassVar[List[str]] = ["echem"]
-    MASS_REGEX: ClassVar[re.Pattern] = re.compile(r"(\d+\.?\d*)\s*(mg|g)", re.IGNORECASE)
+    DEFAULT_TECHNIQUE: ClassVar[list[str]] = ["echem"]
+    MASS_REGEX: ClassVar[re.Pattern[str]] = re.compile(r"(\d+\.?\d*)\s*(mg|g)", re.IGNORECASE)
 
     # --- Loader Metadata ---
     supports_directories: ClassVar[bool] = True
     instrument: ClassVar[str] = "biologic"
 
-    # --- Traitlets ---
-    filepath = Unicode()
-    active_material_mass = Unicode(allow_none=True)
-    sample_name = Unicode(None, allow_none=True)
-    start_time = Unicode(None, allow_none=True)
-    operator = Unicode(None, allow_none=True)
-    wave_number = Unicode(None, allow_none=True)
-    technique = TList(Unicode(), default_value=DEFAULT_TECHNIQUE)
-    # instrument traitlet removed to avoid conflict with ClassVar
+    def __init__(self, filepath: str | Path | None = None, **kwargs: Any) -> None:
+        """Initialize the BioLogic reader.
 
-    def __init__(self, filepath: Optional[Union[str, Path]] = None, **kwargs: Any) -> None:
-        super().__init__(**kwargs)
-        if filepath:
-            self.filepath = str(filepath)
+        Args:
+            filepath: Path to MPT file or directory
+            **kwargs: Additional metadata overrides
+        """
+        # Set default technique
+        if "technique" not in kwargs:
+            kwargs["technique"] = self.DEFAULT_TECHNIQUE
+        super().__init__(filepath, **kwargs)
 
-    def load(self, **_kwargs: Any) -> Tuple[RawData, RawDataInfo]:
-        """Load BioLogic MPT file(s) and return RawData and RawDataInfo."""
-        if not self.filepath:
-            raise ValueError("filepath must be set before calling load()")
+    def _load_single_file(self, path: Path, **_kwargs: Any) -> tuple[RawData, RawDataInfo]:
+        """Internal method to load a single BioLogic MPT file.
 
-        path = Path(self.filepath)
-        if not path.exists():
-            raise FileNotFoundError(f"Path not found: {path}")
+        Args:
+            path: Path to the MPT file
+            **_kwargs: Additional arguments (unused, prefixed with _ to silence linter)
 
-        if path.is_file():
-            return self._load_single_file(path)
-        if path.is_dir():
-            return self._load_directory(path)
-
-        raise ValueError(f"Path is neither a file nor a directory: {path}")
-
-    def _load_single_file(self, path: Path) -> Tuple[RawData, RawDataInfo]:
-        """Internal method to load a single BioLogic MPT file."""
+        Returns:
+            Tuple of (RawData, RawDataInfo)
+        """
         with open(path, "rb") as f:
             mpt_array, comments = _read_mpt_content(f)
 
@@ -274,8 +297,15 @@ class BiologicMPTReader(HasTraits):
 
         return RawData(data=ds), raw_info
 
-    def _extract_mass(self, metadata: Dict[str, Any]) -> Optional[float]:
-        """Extract mass in grams from metadata or traitlet."""
+    def _extract_mass(self, metadata: dict[str, Any]) -> float | None:
+        """Extract mass in grams from metadata or traitlet.
+
+        Args:
+            metadata: Metadata dictionary
+
+        Returns:
+            Mass in grams or None
+        """
         mass_str = self.active_material_mass or metadata.get("active_material_mass")
         if not mass_str:
             return None
@@ -286,8 +316,17 @@ class BiologicMPTReader(HasTraits):
             return val * 0.001 if unit == "mg" else val
         return None
 
-    def _create_dataset(self, mpt_array: np.ndarray, metadata: Dict[str, Any], mass: Optional[float]) -> xr.Dataset:
-        """Create a standardized xarray.Dataset from MPT array."""
+    def _create_dataset(self, mpt_array: np.ndarray, metadata: dict[str, Any], mass: float | None) -> xr.Dataset:
+        """Create a standardized xarray.Dataset from MPT array.
+
+        Args:
+            mpt_array: NumPy array from MPT file
+            metadata: Metadata dictionary
+            mass: Active material mass in grams
+
+        Returns:
+            xarray Dataset
+        """
         names = list(mpt_array.dtype.names or [])
         n_records = len(mpt_array)
 
@@ -320,10 +359,19 @@ class BiologicMPTReader(HasTraits):
         return ds
 
     @staticmethod
-    def _compute_extra_columns(mpt_array: np.ndarray, metadata: Dict, mass: Optional[float]) -> Tuple[Dict, Dict]:
-        """Compute additional columns like voltage, systime, and specific capacity."""
-        extra_vars: Dict[str, Any] = {}
-        extra_coords: Dict[str, Any] = {}
+    def _compute_extra_columns(mpt_array: np.ndarray, metadata: dict, mass: float | None) -> tuple[dict[str, Any], dict[str, Any]]:
+        """Compute additional columns like voltage, systime, and specific capacity.
+
+        Args:
+            mpt_array: NumPy array from MPT file
+            metadata: Metadata dictionary
+            mass: Active material mass in grams
+
+        Returns:
+            Tuple of (extra_vars, extra_coords)
+        """
+        extra_vars: dict[str, Any] = {}
+        extra_coords: dict[str, Any] = {}
         names = mpt_array.dtype.names or []
         n_records = len(mpt_array)
 
@@ -358,7 +406,11 @@ class BiologicMPTReader(HasTraits):
 
     @staticmethod
     def _apply_standard_attrs(ds: xr.Dataset) -> None:
-        """Apply standard units and long names."""
+        """Apply standard units and long names.
+
+        Args:
+            ds: xarray Dataset to modify in-place
+        """
         attr_map = {
             "time/s": {"units": "s", "long_name": "Time"},
             "Ewe/V": {"units": "V", "long_name": "Working Electrode Potential"},
@@ -375,14 +427,22 @@ class BiologicMPTReader(HasTraits):
             if var in ds:
                 ds[var].attrs.update(attrs)
 
-    def _load_directory(self, path: Path) -> Tuple[RawData, RawDataInfo]:
-        """Load all BioLogic MPT files in a directory into a DataTree."""
+    def _load_directory(self, path: Path, **_kwargs: Any) -> tuple[RawData, RawDataInfo]:
+        """Load all BioLogic MPT files in a directory into a DataTree.
+
+        Args:
+            path: Path to the directory
+            **_kwargs: Additional arguments (unused, prefixed with _ to silence linter)
+
+        Returns:
+            Tuple of (RawData with DataTree, merged RawDataInfo)
+        """
         mpt_files = sorted(path.rglob("*.mpt"))
         if not mpt_files:
             raise FileNotFoundError(f"No .mpt files found in {path}")
 
-        tree_dict = {}
-        infos = []
+        tree_dict: dict[str, Any] = {}
+        infos: list[RawDataInfo] = []
 
         for f in mpt_files:
             try:
@@ -390,100 +450,43 @@ class BiologicMPTReader(HasTraits):
                 ds = cast(xr.Dataset, raw_data.data)
 
                 # Sanitize for DataTree (no '/' allowed in variable names)
-                # Build rename dict and drop conflicting variables
-                rename_dict = {}
-                vars_to_drop = []
-                for v in ds.data_vars:
-                    v_str = str(v)
-                    if "/" in v_str:
-                        new_name = v_str.replace("/", "_")
-                        # Check if the new name already exists
-                        if new_name not in ds:
-                            rename_dict[v_str] = new_name
-                        else:
-                            # Drop the original variable with "/" since standardized version exists
-                            vars_to_drop.append(v_str)
-
-                if vars_to_drop:
-                    ds = ds.drop_vars(vars_to_drop)
-                if rename_dict:
-                    ds = ds.rename(rename_dict)
+                ds = sanitize_variable_names(ds)
 
                 rel_path = f.relative_to(path).with_suffix("")
                 node_path = "/" + "/".join(rel_path.parts)
                 tree_dict[node_path] = ds
                 infos.append(raw_info)
             except Exception as e:
-                logger.warning(f"Failed to load {f}: {e}")
+                logger.warning("Failed to load %s: %s", f, e)
                 continue
 
         if not tree_dict:
             raise RuntimeError(f"Failed to load any .mpt files from {path}")
 
         tree = xr.DataTree.from_dict(tree_dict, name=path.name)
-        merged_info = self._merge_infos(infos, path)
+        merged_info = merge_infos(
+            infos,
+            path,
+            sample_name_override=self.sample_name,
+            operator_override=self.operator,
+            start_time_override=self.start_time,
+            active_material_mass_override=self.active_material_mass,
+            wave_number_override=self.wave_number,
+            technique=list(self.technique),
+            instrument=self.instrument,
+        )
         return RawData(data=tree), merged_info
 
-    def _merge_infos(self, infos: List[RawDataInfo], root_path: Path) -> RawDataInfo:
-        """Merge multiple RawDataInfo objects.
+    def _detect_techniques(self, cleaned_metadata: dict, mpt_array: np.ndarray) -> list[str]:
+        """Detect specific electrochemical techniques.
 
-        Combines metadata from multiple files, storing unique values in lists.
-        Removes duplicates from each field.
+        Args:
+            cleaned_metadata: Cleaned metadata dictionary
+            mpt_array: NumPy array from MPT file
+
+        Returns:
+            List of detected techniques
         """
-        if not infos:
-            return RawDataInfo()
-
-        # Collect techniques from all files
-        # 'echem' is kept unique, other techniques can repeat (one per file)
-        all_techs = []
-        seen_echem = False
-        for info in infos:
-            for tech in info.technique:
-                if tech.lower() == "echem":
-                    if not seen_echem:
-                        all_techs.append(tech)
-                        seen_echem = True
-                else:
-                    all_techs.append(tech)
-
-        # Collect unique values for each field
-        # Keep sample_names in original order without deduplication (one per file)
-        sample_names = [info.sample_name for info in infos if info.sample_name]
-        operators = sorted({info.operator for info in infos if info.operator})
-        start_times = sorted({info.start_time for info in infos if info.start_time})
-        masses = sorted({info.active_material_mass for info in infos if info.active_material_mass})
-        wave_numbers = sorted({info.wave_number for info in infos if info.wave_number})
-
-        # Build combined others dict with all unique metadata
-        combined_others = {
-            "n_files": len(infos),
-            # Always store all sample names as a list for folder loading
-            "sample_names": sample_names,
-        }
-
-        # Add list versions of other metadata if multiple unique values exist
-        if len(operators) > 1:
-            combined_others["all_operators"] = operators
-        if len(masses) > 1:
-            combined_others["all_active_material_masses"] = masses
-
-        # Determine folder name: use absolute path if root_path is relative like '.' or '..'
-        # Note: Path('.').name returns empty string '', not '.'
-        folder_name = root_path.resolve().name if root_path.name in (".", "..", "") else root_path.name
-
-        return RawDataInfo(
-            sample_name=self.sample_name or folder_name,  # Use folder name as primary sample_name
-            technique=all_techs,
-            instrument=self.instrument,
-            operator=self.operator or (operators[0] if len(operators) == 1 else None),
-            start_time=self.start_time or (start_times[0] if len(start_times) == 1 else None),
-            active_material_mass=self.active_material_mass or (masses[0] if len(masses) == 1 else None),
-            wave_number=self.wave_number or (wave_numbers[0] if len(wave_numbers) == 1 else None),
-            others=combined_others,
-        )
-
-    def _detect_techniques(self, cleaned_metadata: Dict, mpt_array: np.ndarray) -> List[str]:
-        """Detect specific electrochemical techniques."""
         tech_str = cleaned_metadata.get("file_info", {}).get("technique", "")
         names = mpt_array.dtype.names or []
         tech_list = list(self.technique)
@@ -498,10 +501,17 @@ class BiologicMPTReader(HasTraits):
         return list(set(tech_list))
 
     @staticmethod
-    def _parse_mpt_metadata(comments: List[Union[bytes, str]]) -> Dict[str, Any]:
-        """Parse MPT file comments into structured metadata."""
-        meta: Dict[str, Any] = {}
-        state = {"current_section": None, "in_parameters": False, "work_mode_list": []}
+    def _parse_mpt_metadata(comments: list[bytes | str]) -> dict[str, Any]:
+        """Parse MPT file comments into structured metadata.
+
+        Args:
+            comments: List of comment lines from MPT file
+
+        Returns:
+            Parsed metadata dictionary
+        """
+        meta: dict[str, Any] = {}
+        state: dict[str, Any] = {"current_section": None, "in_parameters": False, "work_mode_list": []}
 
         for line in comments:
             text = line.decode("latin1") if isinstance(line, bytes) else line
@@ -517,19 +527,25 @@ class BiologicMPTReader(HasTraits):
         return meta
 
     @staticmethod
-    def _handle_mpt_line(text: str, meta: Dict, state: Dict) -> None:
-        """Handle a single line of MPT metadata."""
+    def _handle_mpt_line(text: str, meta: dict, state: dict) -> None:
+        """Handle a single line of MPT metadata.
+
+        Args:
+            text: Line of text from MPT file
+            meta: Metadata dictionary to update
+            state: State dictionary for parsing
+        """
         indent = len(text) - len(text.lstrip())
         content = text.strip()
 
-        def split_kv(c: str) -> Optional[Tuple[str, str]]:
+        def split_kv(c: str) -> tuple[str, str] | None:
             for sep in (" : ", ":"):
                 if sep in c:
                     k, v = c.split(sep, 1)
                     return k.strip(), v.strip()
             return None
 
-        def add_val(d: Dict, key: str, val: Any) -> None:
+        def add_val(d: dict, key: str, val: Any) -> None:
             if key not in d:
                 d[key] = val
             else:
@@ -568,9 +584,16 @@ class BiologicMPTReader(HasTraits):
                     state["current_section"] = None
 
     @staticmethod
-    def _clean_metadata(metadata: Dict[str, Any]) -> Dict[str, Any]:
-        """Clean metadata to keep only essential fields."""
-        cleaned: Dict[str, Any] = {}
+    def _clean_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
+        """Clean metadata to keep only essential fields.
+
+        Args:
+            metadata: Raw metadata dictionary
+
+        Returns:
+            Cleaned metadata dictionary
+        """
+        cleaned: dict[str, Any] = {}
         file_info = metadata.get("file_info", {})
 
         test_keys = ["technique", "Electrode material", "Electrolyte", "Mass of active material", "Reference electrode", "Acquisition started on", "Operator"]
@@ -598,3 +621,12 @@ class BiologicMPTReader(HasTraits):
             cleaned.setdefault("active_material_mass", proc_info["Characteristic mass"])
 
         return {**cleaned, **metadata}
+
+    @staticmethod
+    def _get_file_extension() -> str:
+        """Get the file extension for this reader.
+
+        Returns:
+            File extension including the dot
+        """
+        return ".mpt"

@@ -1,14 +1,28 @@
-"""Unified file loading interface for scientific data.
+"""科学数据的统一文件加载接口。
 
-This module provides a simplified interface for loading data files.
-It automatically detects file formats and delegates loading to the
-appropriate reader in the plugins directory.
+本模块提供简化的数据文件加载接口。自动检测文件格式并委托给
+插件目录中相应的读取器进行处理。
+
+主要功能：
+- 自动格式检测：根据文件扩展名自动选择合适的读取器
+- 多仪器支持：同一扩展名可支持多个仪器的读取器
+- 元数据覆盖：支持手动覆盖样本名称、操作员等元数据
+- 目录加载：支持加载整个目录的数据文件
+
+使用示例：
+    >>> from echemistpy.io import load
+    >>> # 自动检测格式
+    >>> raw_data, raw_info = load("data.mpt", sample_name="MySample")
+    >>> # 指定仪器（对于有多个读取器的格式）
+    >>> raw_data, raw_info = load("data.xlsx", instrument="lanhe")
+    >>> # 加载目录
+    >>> raw_data, raw_info = load("./data_dir", instrument="biologic")
 """
 
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, Optional
 
 from echemistpy.io.plugin_manager import get_plugin_manager
 from echemistpy.io.standardizer import (
@@ -56,24 +70,32 @@ def load(
     instrument: Optional[str] = None,
     standardize: bool = True,
     **kwargs: Any,
-) -> Tuple[RawData, RawDataInfo]:
-    """Load a data file and return standardized RawData and RawDataInfo.
+) -> tuple[RawData, RawDataInfo]:
+    """加载数据文件并返回标准化的 RawData 和 RawDataInfo。
 
     Args:
-        path: Path to the data file
-        fmt: Optional format override (e.g., '.mpt')
-        technique: Optional technique hint (string or list of strings)
-        instrument: Optional instrument name override
-        standardize: Whether to automatically standardize the data (default: True)
-        **kwargs: Additional arguments passed to the specific reader:
-            - sample_name: Optional sample name override
-            - start_time: Optional start time override
-            - operator: Optional operator name override
-            - active_material_mass: Optional active material mass override
-            - wave_number: Optional wave number override
+        path: 数据文件路径
+        fmt: 可选的格式覆盖（如 '.mpt'）
+        technique: 可选的技术类型提示（字符串或字符串列表）
+        instrument: 可选的仪器名称覆盖
+        standardize: 是否自动标准化数据（默认为 True）
+        **kwargs: 传递给特定读取器的额外参数：
+            - sample_name: 可选的样本名称覆盖
+            - start_time: 可选的开始时间覆盖
+            - operator: 可选的操作员名称覆盖
+            - active_material_mass: 可选的活性物质质量覆盖
+            - wave_number: 可选的波数覆盖
 
     Returns:
-        Tuple of (RawData, RawDataInfo)
+        (RawData, RawDataInfo) 元组
+
+    Raises:
+        ValueError: 如果目录加载未指定 instrument 或 fmt
+        ValueError: 如果找不到指定扩展名的加载器
+        ValueError: 如果多个加载器可用但未指定 instrument
+        ValueError: 如果指定的 instrument 没有匹配的加载器
+        FileNotFoundError: 如果文件不存在
+        RuntimeError: 如果读取器类未实现 load() 方法
     """
     # Extract metadata overrides from kwargs
     overrides: dict[str, Any] = {
@@ -98,9 +120,11 @@ def load(
 
     # If it's a directory and no extension is provided, we need to find a loader by instrument
     if path.is_dir() and not ext and instrument:
-        # Search all extensions for this instrument
+        # 精确匹配 instrument 名称，避免子串匹配错误
+        instrument_normalized = instrument.lower().strip()
         for supported_ext in pm.list_supported_extensions():
-            if instrument.lower() in [inst.lower() for inst in pm.get_loader_instruments(supported_ext)]:
+            available_instruments = [inst.lower().strip() for inst in pm.get_loader_instruments(supported_ext)]
+            if instrument_normalized in available_instruments:
                 ext = supported_ext
                 break
 

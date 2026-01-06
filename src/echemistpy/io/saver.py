@@ -1,13 +1,19 @@
-"""Unified file saving interface for scientific data.
+"""科学数据的统一文件保存接口。
 
-This module provides a simplified interface for saving data.
-It supports common formats like CSV, JSON, and NetCDF/HDF5.
+本模块提供简化的数据保存接口。支持常见的格式，
+如 CSV、JSON 和 NetCDF/HDF5。
+
+主要功能：
+- 数据保存：支持 .nc（NetCDF）和 .csv 格式
+- 元数据保存：将 Info 对象保存为 .dat（JSON 格式）
+- 组合保存：将数据和元数据一起保存到单个文件
+- 自定义编码：处理 datetime、Path 等特殊类型
 """
 
 from __future__ import annotations
 
 import json
-from datetime import datetime, date
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Optional, Sequence, Union
 

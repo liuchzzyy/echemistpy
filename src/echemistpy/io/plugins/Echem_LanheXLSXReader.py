@@ -3,25 +3,27 @@
 # ruff: noqa: N999
 """XLSX Data Reader for LANHE battery test files with metadata extraction using traitlets."""
 
+from __future__ import annotations
+
 import logging
 import re
 from datetime import datetime
 from pathlib import Path
-from typing import Any, ClassVar, Dict, List, Optional, Tuple, Union
+from typing import Any, ClassVar
 
 import openpyxl
 import openpyxl.worksheet.worksheet
 import pandas as pd
 import xarray as xr
-from traitlets import HasTraits, Unicode
-from traitlets import List as TList
 
+from echemistpy.io.base_reader import BaseReader
+from echemistpy.io.reader_utils import merge_infos
 from echemistpy.io.structures import RawData, RawDataInfo
 
 logger = logging.getLogger(__name__)
 
 
-class LanheXLSXReader(HasTraits):
+class LanheXLSXReader(BaseReader):
     """Reader for LANHE exported XLSX files.
 
     This reader handles the specific structure of LANHE battery test exports,
@@ -29,7 +31,7 @@ class LanheXLSXReader(HasTraits):
     """
 
     # --- Constants for better maintainability ---
-    ORDERED_COLUMNS: ClassVar[List[str]] = [
+    ORDERED_COLUMNS: ClassVar[list[str]] = [
         "Record",
         "SysTime",
         "Cycle",
@@ -43,7 +45,7 @@ class LanheXLSXReader(HasTraits):
         "dVdQ/V/uAh",
     ]
 
-    METADATA_MAPPING: ClassVar[Dict[str, str]] = {
+    METADATA_MAPPING: ClassVar[dict[str, str]] = {
         "Test name": "test_name",
         "Start time": "start_time",
         "Finish time": "finish_time",
@@ -51,53 +53,34 @@ class LanheXLSXReader(HasTraits):
         "Operator": "operator",
     }
 
-    INDEX_COLUMNS: ClassVar[List[str]] = ["Record", "record", "Row", "row", "Index", "index"]
+    INDEX_COLUMNS: ClassVar[list[str]] = ["Record", "record", "Row", "row", "Index", "index"]
 
     # --- Loader Metadata ---
     supports_directories: ClassVar[bool] = True
     instrument: ClassVar[str] = "lanhe"
 
-    # --- Traitlets for configuration and metadata ---
-    filepath = Unicode()
-    active_material_mass = Unicode(allow_none=True)
-    sample_name = Unicode(None, allow_none=True)
-    start_time = Unicode(None, allow_none=True)
-    operator = Unicode(None, allow_none=True)
-    wave_number = Unicode(None, allow_none=True)
-    technique = TList(Unicode(), default_value=["echem"])
-    # instrument traitlet removed to avoid conflict with ClassVar
+    def __init__(self, filepath: str | Path | None = None, **kwargs: Any) -> None:
+        """Initialize the LANHE reader.
 
-    def __init__(self, filepath: Optional[Union[str, Path]] = None, **kwargs: Any) -> None:
-        super().__init__(**kwargs)
-        if filepath:
-            self.filepath = str(filepath)
+        Args:
+            filepath: Path to XLSX file or directory
+            **kwargs: Additional metadata overrides
+        """
+        # Set default technique
+        if "technique" not in kwargs:
+            kwargs["technique"] = ["echem"]
+        super().__init__(filepath, **kwargs)
 
-    def load(self, **_kwargs: Any) -> Tuple[RawData, RawDataInfo]:
-        """Load LANHE XLSX file(s) and return RawData and RawDataInfo.
+    def _load_single_file(self, path: Path, **_kwargs: Any) -> tuple[RawData, RawDataInfo]:
+        """Internal method to load and process a single LANHE XLSX file.
+
+        Args:
+            path: Path to the XLSX file
+            **_kwargs: Additional arguments (unused, prefixed with _ to silence linter)
 
         Returns:
-            A tuple containing the loaded RawData and its associated RawDataInfo.
-
-        Raises:
-            ValueError: If filepath is not set or path type is invalid.
-            FileNotFoundError: If the specified path does not exist.
+            Tuple of (RawData, RawDataInfo)
         """
-        if not self.filepath:
-            raise ValueError("filepath must be set before calling load()")
-
-        path = Path(self.filepath)
-        if not path.exists():
-            raise FileNotFoundError(f"Path not found: {path}")
-
-        if path.is_file():
-            return self._load_single_file(path)
-        if path.is_dir():
-            return self._load_directory(path)
-
-        raise ValueError(f"Path is neither a file nor a directory: {path}")
-
-    def _load_single_file(self, path: Path) -> Tuple[RawData, RawDataInfo]:
-        """Internal method to load and process a single LANHE XLSX file."""
         # 1. Extraction
         metadata, data_dict = self._read_xlsx(path)
 
@@ -117,8 +100,15 @@ class LanheXLSXReader(HasTraits):
         return RawData(data=ds), raw_info
 
     @staticmethod
-    def _create_dataset(data: Dict[str, Any]) -> xr.Dataset:
-        """Create an xarray Dataset from cleaned data dictionary."""
+    def _create_dataset(data: dict[str, Any]) -> xr.Dataset:
+        """Create an xarray Dataset from cleaned data dictionary.
+
+        Args:
+            data: Cleaned data dictionary
+
+        Returns:
+            xarray Dataset
+        """
         ds = xr.Dataset({k: (("record",), v) for k, v in data.items()})
 
         # Sanitize variable names (replace / with _)
@@ -130,7 +120,14 @@ class LanheXLSXReader(HasTraits):
 
     @staticmethod
     def _apply_time_coords(ds: xr.Dataset) -> xr.Dataset:
-        """Convert SysTime to coordinates and calculate relative time."""
+        """Convert SysTime to coordinates and calculate relative time.
+
+        Args:
+            ds: xarray Dataset
+
+        Returns:
+            Modified xarray Dataset
+        """
         systime_key = "SysTime" if "SysTime" in ds else "SysTime".replace("/", "_")
 
         if systime_key in ds:
@@ -151,7 +148,14 @@ class LanheXLSXReader(HasTraits):
 
     @staticmethod
     def _set_primary_index(ds: xr.Dataset) -> xr.Dataset:
-        """Set the primary index for the 'record' dimension."""
+        """Set the primary index for the 'record' dimension.
+
+        Args:
+            ds: xarray Dataset
+
+        Returns:
+            Modified xarray Dataset
+        """
         for index_col in LanheXLSXReader.INDEX_COLUMNS:
             # Check both original and sanitized names
             for col in [index_col, index_col.replace("/", "_")]:
@@ -159,8 +163,17 @@ class LanheXLSXReader(HasTraits):
                     return ds.set_index(record=col)
         return ds
 
-    def _create_raw_info(self, path: Path, metadata: Dict[str, Any], mass: Any) -> RawDataInfo:
-        """Create a RawDataInfo object from metadata."""
+    def _create_raw_info(self, path: Path, metadata: dict[str, Any], mass: Any) -> RawDataInfo:
+        """Create a RawDataInfo object from metadata.
+
+        Args:
+            path: File path
+            metadata: Cleaned metadata dictionary
+            mass: Active material mass
+
+        Returns:
+            RawDataInfo object
+        """
         start_time_val = self.start_time or metadata.get("start_time")
         if isinstance(start_time_val, datetime):
             start_time_val = start_time_val.strftime("%Y-%m-%d %H:%M:%S")
@@ -170,6 +183,8 @@ class LanheXLSXReader(HasTraits):
         if tech_list == ["echem"]:
             tech_list.append("gcd")
 
+        metadata_with_path = {**metadata, "file_path": str(path)}
+
         return RawDataInfo(
             sample_name=self.sample_name or str(metadata.get("test_name", path.stem)),
             start_time=start_time_val,
@@ -178,11 +193,19 @@ class LanheXLSXReader(HasTraits):
             instrument=self.instrument,
             active_material_mass=mass,
             wave_number=self.wave_number,
-            others={**metadata, "file_path": str(path)},
+            others=metadata_with_path,
         )
 
-    def _load_directory(self, path: Path) -> Tuple[RawData, RawDataInfo]:
-        """Load all LANHE XLSX files in a directory into a DataTree."""
+    def _load_directory(self, path: Path, **_kwargs: Any) -> tuple[RawData, RawDataInfo]:
+        """Load all LANHE XLSX files in a directory into a DataTree.
+
+        Args:
+            path: Path to the directory
+            **_kwargs: Additional arguments (unused, prefixed with _ to silence linter)
+
+        Returns:
+            Tuple of (RawData with DataTree, merged RawDataInfo)
+        """
         xlsx_files = sorted(path.rglob("*.xlsx"))
         if not xlsx_files:
             raise FileNotFoundError(f"No .xlsx files found in {path}")
@@ -204,70 +227,31 @@ class LanheXLSXReader(HasTraits):
         if not tree.children and not tree.has_data:
             raise RuntimeError(f"Failed to load any valid .xlsx files from {path}")
 
-        return RawData(data=tree), self._merge_infos(infos, path)
-
-    def _merge_infos(self, infos: List[RawDataInfo], root_path: Path) -> RawDataInfo:
-        """Merge multiple RawDataInfo objects.
-
-        Combines metadata from multiple files, storing unique values in lists.
-        Removes duplicates from each field.
-        """
-        if not infos:
-            return RawDataInfo()
-
-        # Collect techniques from all files
-        # 'echem' is kept unique, other techniques can repeat (one per file)
-        all_techs = []
-        seen_echem = False
-        for info in infos:
-            for tech in info.technique:
-                if tech.lower() == "echem":
-                    if not seen_echem:
-                        all_techs.append(tech)
-                        seen_echem = True
-                else:
-                    all_techs.append(tech)
-
-        # Collect unique values for each field
-        # Keep sample_names in original order without deduplication (one per file)
-        sample_names = [info.sample_name for info in infos if info.sample_name]
-        operators = sorted({info.operator for info in infos if info.operator})
-        start_times = sorted({info.start_time for info in infos if info.start_time})
-        masses = sorted({info.active_material_mass for info in infos if info.active_material_mass})
-        wave_numbers = sorted({info.wave_number for info in infos if info.wave_number})
-
-        # Build combined others dict with all unique metadata
-        combined_others = {
-            "n_files": len(infos),
-            # Always store all sample names as a list for folder loading
-            "sample_names": sample_names,
-        }
-
-        # Add list versions of other metadata if multiple unique values exist
-        if len(operators) > 1:
-            combined_others["all_operators"] = operators
-        if len(masses) > 1:
-            combined_others["all_active_material_masses"] = masses
-
-        # Determine folder name: use absolute path if root_path is relative like '.' or '..'
-        # Note: Path('.').name returns empty string '', not '.'
-        folder_name = root_path.resolve().name if root_path.name in (".", "..", "") else root_path.name
-
-        return RawDataInfo(
-            sample_name=self.sample_name or folder_name,  # Use folder name as primary sample_name
-            technique=all_techs,
+        merged_info = merge_infos(
+            infos,
+            path,
+            sample_name_override=self.sample_name,
+            operator_override=self.operator,
+            start_time_override=self.start_time,
+            active_material_mass_override=self.active_material_mass,
+            wave_number_override=self.wave_number,
+            technique=list(self.technique),
             instrument=self.instrument,
-            operator=self.operator or (operators[0] if len(operators) == 1 else None),
-            start_time=self.start_time or (start_times[0] if len(start_times) == 1 else None),
-            active_material_mass=self.active_material_mass or (masses[0] if len(masses) == 1 else None),
-            wave_number=self.wave_number or (wave_numbers[0] if len(wave_numbers) == 1 else None),
-            others=combined_others,
         )
 
-    def _read_xlsx(self, filepath: Path) -> Tuple[Dict[str, Any], Dict[str, Any]]:
-        """Read metadata and data from LANHE .xlsx file using openpyxl."""
-        metadata: Dict[str, Any] = {}
-        data_dict: Dict[str, Any] = {}
+        return RawData(data=tree), merged_info
+
+    def _read_xlsx(self, filepath: Path) -> tuple[dict[str, Any], dict[str, Any]]:
+        """Read metadata and data from LANHE .xlsx file using openpyxl.
+
+        Args:
+            filepath: Path to the XLSX file
+
+        Returns:
+            Tuple of (metadata_dict, data_dict)
+        """
+        metadata: dict[str, Any] = {}
+        data_dict: dict[str, Any] = {}
 
         # Use read_only for memory efficiency
         wb = openpyxl.load_workbook(filepath, read_only=True, data_only=True)
@@ -285,10 +269,18 @@ class LanheXLSXReader(HasTraits):
 
         return metadata, data_dict
 
-    def _read_record_data_from_ws(self, ws: openpyxl.worksheet.worksheet.Worksheet, sheet_name: str) -> Dict[str, Any]:
-        """Extract record-level data from an open worksheet."""
-        header: Optional[List[str]] = None
-        rows: List[Tuple[Any, ...]] = []
+    def _read_record_data_from_ws(self, ws: openpyxl.worksheet.worksheet.Worksheet, sheet_name: str) -> dict[str, Any]:
+        """Extract record-level data from an open worksheet.
+
+        Args:
+            ws: openpyxl Worksheet object
+            sheet_name: Name of the sheet
+
+        Returns:
+            Dictionary with column data
+        """
+        header: list[str] | None = None
+        rows: list[tuple[Any, ...]] = []
 
         for row in ws.iter_rows(values_only=True):
             if not row or row[0] is None:
@@ -316,8 +308,13 @@ class LanheXLSXReader(HasTraits):
         data["_metadata"] = {"sheet_name": sheet_name, "num_rows": len(rows), "columns": header}
         return data
 
-    def _read_test_info(self, wb: openpyxl.Workbook, metadata: Dict[str, Any]) -> None:
-        """Read 'Test information' sheet."""
+    def _read_test_info(self, wb: openpyxl.Workbook, metadata: dict[str, Any]) -> None:
+        """Read 'Test information' sheet.
+
+        Args:
+            wb: openpyxl Workbook object
+            metadata: Metadata dictionary to update
+        """
         if "Test information" in wb.sheetnames:
             try:
                 ws = wb["Test information"]
@@ -327,15 +324,20 @@ class LanheXLSXReader(HasTraits):
             except Exception as e:
                 logger.debug("Error reading Test Information: %s", e)
 
-    def _read_proc_info(self, wb: openpyxl.Workbook, metadata: Dict[str, Any]) -> None:
-        """Read 'Ch1_Proc' sheet and extract Work Mode table."""
+    def _read_proc_info(self, wb: openpyxl.Workbook, metadata: dict[str, Any]) -> None:
+        """Read 'Ch1_Proc' sheet and extract Work Mode table.
+
+        Args:
+            wb: openpyxl Workbook object
+            metadata: Metadata dictionary to update
+        """
         if "Ch1_Proc" not in wb.sheetnames:
             return
         try:
             ws = wb["Ch1_Proc"]
-            proc_info: Dict[str, Any] = {}
-            work_mode: List[Dict[str, Any]] = []
-            headers: Optional[List[str]] = None
+            proc_info: dict[str, Any] = {}
+            work_mode: list[dict[str, Any]] = []
+            headers: list[str] | None = None
 
             for row in ws.iter_rows(values_only=True):
                 if not row[0]:
@@ -355,8 +357,13 @@ class LanheXLSXReader(HasTraits):
         except Exception as e:
             logger.debug("Error reading Channel Process Info: %s", e)
 
-    def _read_log_info(self, wb: openpyxl.Workbook, metadata: Dict[str, Any]) -> None:
-        """Read 'Log' sheet."""
+    def _read_log_info(self, wb: openpyxl.Workbook, metadata: dict[str, Any]) -> None:
+        """Read 'Log' sheet.
+
+        Args:
+            wb: openpyxl Workbook object
+            metadata: Metadata dictionary to update
+        """
         if "Log" in wb.sheetnames:
             try:
                 ws = wb["Log"]
@@ -366,13 +373,27 @@ class LanheXLSXReader(HasTraits):
                 logger.debug("Error reading Log Info: %s", e)
 
     @staticmethod
-    def _find_data_sheet(wb: openpyxl.Workbook) -> Optional[str]:
-        """Find the sheet containing 'DefaultGroup'."""
+    def _find_data_sheet(wb: openpyxl.Workbook) -> str | None:
+        """Find the sheet containing 'DefaultGroup'.
+
+        Args:
+            wb: openpyxl Workbook object
+
+        Returns:
+            Sheet name or None
+        """
         return next((name for name in wb.sheetnames if "DefaultGroup" in name), None)
 
     @staticmethod
     def _convert_time(value: Any) -> Any:
-        """Convert Excel values or LANHE time strings to standard formats."""
+        """Convert Excel values or LANHE time strings to standard formats.
+
+        Args:
+            value: Value to convert
+
+        Returns:
+            Converted value
+        """
         if value is None or isinstance(value, (datetime, int, float)):
             return value
 
@@ -397,8 +418,16 @@ class LanheXLSXReader(HasTraits):
         return value
 
     @staticmethod
-    def _parse_abs_time(date_part: str, time_part: str) -> Optional[datetime]:
-        """Parse YYYY-MM-DD HH:MM:SS.mmm format."""
+    def _parse_abs_time(date_part: str, time_part: str) -> datetime | None:
+        """Parse YYYY-MM-DD HH:MM:SS.mmm format.
+
+        Args:
+            date_part: Date part of the string
+            time_part: Time part of the string
+
+        Returns:
+            datetime object or None
+        """
         try:
             # Normalize separator
             date_str = date_part.replace("/", "-")
@@ -410,8 +439,16 @@ class LanheXLSXReader(HasTraits):
             return None
 
     @staticmethod
-    def _parse_duration(days_part: str, hms_part: str) -> Optional[float]:
-        """Parse D HH:MM:SS.mmm format into total seconds."""
+    def _parse_duration(days_part: str, hms_part: str) -> float | None:
+        """Parse D HH:MM:SS.mmm format into total seconds.
+
+        Args:
+            days_part: Days part of the string
+            hms_part: Hours:Minutes:Seconds part
+
+        Returns:
+            Total seconds or None
+        """
         if days_part.isdigit():
             try:
                 hms = hms_part.split(":")
@@ -421,9 +458,16 @@ class LanheXLSXReader(HasTraits):
                 pass
         return None
 
-    def _clean_metadata(self, metadata: Dict[str, Any]) -> Dict[str, Any]:
-        """Clean and map metadata to standard fields."""
-        cleaned: Dict[str, Any] = {}
+    def _clean_metadata(self, metadata: dict[str, Any]) -> dict[str, Any]:
+        """Clean and map metadata to standard fields.
+
+        Args:
+            metadata: Raw metadata dictionary
+
+        Returns:
+            Cleaned metadata dictionary
+        """
+        cleaned: dict[str, Any] = {}
 
         if info := metadata.get("Test_Information"):
             for raw_key, clean_key in self.METADATA_MAPPING.items():
@@ -447,8 +491,16 @@ class LanheXLSXReader(HasTraits):
         cleaned["technique"] = list(self.technique)
         return {**metadata, **cleaned}
 
-    def _clean_data(self, data: Dict[str, Any], active_material_mass: Any = None) -> Dict[str, Any]:
-        """Filter, order, and optionally calculate specific capacity."""
+    def _clean_data(self, data: dict[str, Any], active_material_mass: Any = None) -> dict[str, Any]:
+        """Filter, order, and optionally calculate specific capacity.
+
+        Args:
+            data: Raw data dictionary
+            active_material_mass: Active material mass
+
+        Returns:
+            Cleaned data dictionary
+        """
         # 1. Calculate Specific Capacity if mass is available
         spe_cap_cal = self._calculate_specific_capacity(data, active_material_mass)
 
@@ -464,8 +516,16 @@ class LanheXLSXReader(HasTraits):
         return cleaned_data
 
     @staticmethod
-    def _calculate_specific_capacity(data: Dict[str, Any], mass_input: Any) -> Optional[List[Optional[float]]]:
-        """Calculate specific capacity (mAh/g) from capacity (uAh) and mass."""
+    def _calculate_specific_capacity(data: dict[str, Any], mass_input: Any) -> list[float | None] | None:
+        """Calculate specific capacity (mAh/g) from capacity (uAh) and mass.
+
+        Args:
+            data: Data dictionary
+            mass_input: Mass value
+
+        Returns:
+            List of specific capacity values or None
+        """
         if not mass_input or "Capacity/uAh" not in data:
             return None
 
@@ -488,3 +548,12 @@ class LanheXLSXReader(HasTraits):
             logger.debug("Failed to calculate specific capacity with mass: %s", mass_input)
 
         return None
+
+    @staticmethod
+    def _get_file_extension() -> str:
+        """Get the file extension for this reader.
+
+        Returns:
+            File extension including the dot
+        """
+        return ".xlsx"

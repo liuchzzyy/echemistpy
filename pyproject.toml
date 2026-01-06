@@ -69,6 +69,7 @@ test = [
   "pytest",
   "pytest-cov",
   "pytest-mock",
+  "pytest-benchmark",
 ]
 
 [project.urls]
@@ -114,7 +115,7 @@ select = [
   "S", # flake8-bandit (security)
 ]
 extend-select = ["I"] # isort
-ignore = ["E501", "PLR2004", "ERA001", "RUF001"]
+ignore = ["E501", "PLR2004", "ERA001", "RUF001", "RUF002", "RUF003"]  # RUF002/003: 允许中文文档中的中文标点符号
 
 # Logger objects that should be checked
 logger-objects = ["app.logger", "logger"]
@@ -127,7 +128,7 @@ logger-objects = ["app.logger", "logger"]
 
 [tool.pytest.ini_options]
 addopts = ["--doctest-modules", "-p no:warnings"]
-testpaths = ["test"]
+testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]

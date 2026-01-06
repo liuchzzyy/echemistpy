@@ -1,7 +1,19 @@
-"""Simple plugin registry for echemistpy io system.
+"""echemistpy IO 系统的插件注册管理器。
 
-This module provides a simple registry to manage loader and saver plugins
-without external dependencies like pluggy.
+本模块提供一个简单的插件注册系统，用于管理数据加载器和保存器插件，
+无需外部依赖（如 pluggy）。
+
+主要功能：
+- 注册和管理文件格式读取器（loaders）
+- 注册和管理数据保存器（savers）
+- 支持同一扩展名的多个加载器（通过 instrument 区分）
+- 单例模式确保全局唯一的插件管理器实例
+
+使用示例：
+    >>> from echemistpy.io.plugin_manager import get_plugin_manager
+    >>> pm = get_plugin_manager()
+    >>> pm.register_loader(['.mpt'], BiologicMPTReader)
+    >>> loader = pm.get_loader('.mpt', instrument='biologic')
 """
 
 from __future__ import annotations
@@ -12,51 +24,73 @@ from traitlets import Bool, Dict, HasTraits
 
 
 class IOPluginManager(HasTraits):
-    """Simple registry for io plugins using traitlets for variable management."""
+    """IO 插件管理器，使用 traitlets 管理插件注册。
+
+    采用单例模式，确保全局只有一个插件管理器实例。
+    支持多种文件格式和仪器的插件注册。
+
+    Attributes:
+        loaders: 字典，映射文件扩展名到加载器类列表
+        savers: 字典，映射格式名称到保存器类
+        initialized: 布尔值，指示默认插件是否已初始化
+
+    Example:
+        >>> pm = IOPluginManager.get_instance()
+        >>> pm.register_loader(['.csv'], MyCSVReader)
+        >>> reader_class = pm.get_loader('.csv')
+    """
 
     _instance = None
 
-    loaders = Dict(help="Dictionary mapping file extensions to a list of loader classes")
-    savers = Dict(help="Dictionary mapping format names to saver classes")
-    initialized = Bool(False, help="Whether default plugins have been initialized")
+    loaders = Dict(help="字典，映射文件扩展名到加载器类列表")
+    savers = Dict(help="字典，映射格式名称到保存器类")
+    initialized = Bool(False, help="默认插件是否已初始化")
 
     @classmethod
     def get_instance(cls) -> IOPluginManager:
-        """Get the global plugin manager instance."""
+        """获取全局插件管理器实例（单例模式）。
+
+        Returns:
+            全局唯一的 IOPluginManager 实例
+        """
         if cls._instance is None:
             cls._instance = cls()
         return cls._instance
 
     def register_loader(self, extensions: list[str], loader_class: Any) -> None:
-        """Register a loader class for specific extensions.
+        """为指定的文件扩展名注册加载器类。
 
         Args:
-            extensions: List of file extensions (e.g., ['mpt', 'mpr'])
-            loader_class: The class or factory to handle these files
+            extensions: 文件扩展名列表（如 ['.mpt', '.mpr']）
+            loader_class: 处理这些文件的类或工厂函数
         """
+        # 批量收集所有更改，一次性更新 traitlets
+        updates = {}
         for ext in extensions:
             ext_clean = ext.lower()
             if not ext_clean.startswith("."):
                 ext_clean = f".{ext_clean}"
 
-            # Create a copy of the dict to ensure traitlets detects the change
-            current_loaders = dict(self.loaders)
-            if ext_clean not in current_loaders:
-                current_loaders[ext_clean] = []
+            # 获取当前扩展的加载器列表
+            current_list = list(self.loaders.get(ext_clean, []))
 
-            # Avoid duplicate registration
-            if loader_class not in current_loaders[ext_clean]:
-                new_list = list(current_loaders[ext_clean])
-                new_list.append(loader_class)
-                current_loaders[ext_clean] = new_list
-                self.loaders = current_loaders
+            # 避免重复注册
+            if loader_class not in current_list:
+                current_list.append(loader_class)
+                updates[ext_clean] = current_list
+
+        # 一次性更新所有更改
+        if updates:
+            new_loaders = dict(self.loaders)
+            new_loaders.update(updates)
+            self.loaders = new_loaders
 
     def register_saver(self, formats: list[str], saver_class: Any) -> None:
-        """Register a saver class for specific formats.
+        """为指定的格式注册保存器类。
 
         Args:
-            formats: List of format names (e.g., ['csv', 'json'])
-            saver_class: The class or factory to handle saving
+            formats: 格式名称列表（如 ['csv', 'json']）
+            saver_class: 处理数据保存的类或工厂函数
         """
         current_savers = dict(self.savers)
         for fmt in formats:
@@ -64,10 +98,16 @@ class IOPluginManager(HasTraits):
         self.savers = current_savers
 
     def get_loader(self, extension: str, instrument: Optional[str] = None) -> Optional[Any]:
-        """Get the loader for a given extension, optionally filtered by instrument.
+        """获取指定扩展名的加载器，可选择按仪器过滤。
 
-        If multiple loaders exist for an extension and no instrument is provided,
-        the first one registered is returned.
+        如果扩展名有多个加载器且未指定仪器，返回第一个注册的加载器。
+
+        Args:
+            extension: 文件扩展名（如 '.mpt'）
+            instrument: 可选的仪器名称过滤器
+
+        Returns:
+            加载器类，如果未找到则返回 None
         """
         ext = extension.lower()
         if not ext.startswith("."):
@@ -78,53 +118,70 @@ class IOPluginManager(HasTraits):
             return None
 
         if instrument:
-            # Try to find a loader that matches the instrument name
+            # 尝试找到匹配仪器名称的加载器
             for loader in loaders:
-                # Check class attribute 'instrument'
+                # 检查类的 'instrument' 属性
                 loader_inst = getattr(loader, "instrument", None)
                 inst_name = ""
-                if hasattr(loader_inst, "default_value"):
+
+                # 处理不同类型的 instrument 属性
+                if loader_inst is None:
+                    continue
+                # 检查是否是 traitlet（带有 default_value）
+                elif hasattr(loader_inst, "default_value"):
                     inst_name = str(loader_inst.default_value)
-                elif loader_inst is not None:
+                # 如果已经是字符串或其他值
+                elif not hasattr(loader_inst, "default_value"):
                     inst_name = str(loader_inst)
 
                 if inst_name and inst_name.lower() == instrument.lower():
                     return loader
 
-                # Also check if the class name contains the instrument name as a fallback
+                # 作为后备，检查类名是否包含仪器名称
                 if instrument.lower() in loader.__name__.lower():
                     return loader
 
-            # If instrument was specified but no match found, return None
+            # 如果指定了仪器但未找到匹配，返回 None
             return None
 
-        # Default to the first one if no instrument provided
+        # 如果未提供仪器，默认返回第一个
         return loaders[0]
 
     def get_saver(self, fmt: str) -> Optional[Any]:
-        """Get the saver for a given format."""
+        """获取指定格式的保存器。
+
+        Args:
+            fmt: 格式名称（如 'csv'）
+
+        Returns:
+            保存器类，如果未找到则返回 None
+        """
         return self.savers.get(fmt.lower())
 
     def list_supported_extensions(self) -> list[str]:
-        """List all supported file extensions."""
+        """列出所有支持的文件扩展名。
+
+        Returns:
+            支持的文件扩展名列表（包含点号）
+        """
         return list(self.loaders.keys())
 
     def get_supported_loaders(self) -> dict[str, list[str]]:
-        """Get dictionary of supported loader extensions.
+        """获取支持的加载器字典。
 
         Returns:
-            Dictionary mapping extensions to a list of loader names
+            映射扩展名到加载器名称列表的字典
         """
         return {ext: [loader.__name__ if hasattr(loader, "__name__") else str(loader) for loader in loaders] for ext, loaders in self.loaders.items()}
 
     def get_loader_instruments(self, extension: str) -> list[str]:
-        """Get a list of available instrument names for a given extension.
+        """获取指定扩展名的可用仪器名称列表。
 
         Args:
-            extension: File extension (e.g., '.xlsx')
+            extension: 文件扩展名（如 '.xlsx'）
 
         Returns:
-            List of instrument names or class names
+            仪器名称或类名称的列表
         """
         ext = extension.lower()
         if not ext.startswith("."):
@@ -144,10 +201,10 @@ class IOPluginManager(HasTraits):
 
 
 def get_plugin_manager() -> IOPluginManager:
-    """Get the global plugin manager instance.
+    """获取全局插件管理器实例的便捷函数。
 
     Returns:
-        Global IOPluginManager instance
+        全局 IOPluginManager 实例
     """
     return IOPluginManager.get_instance()
 

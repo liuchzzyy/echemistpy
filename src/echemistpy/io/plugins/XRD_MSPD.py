@@ -2,24 +2,26 @@
 # ruff: noqa: N999
 """XRD Data Reader for MSPD .xye files with metadata extraction using traitlets."""
 
+from __future__ import annotations
+
 import logging
 import re
 from datetime import datetime
 from pathlib import Path
-from typing import Any, ClassVar, Dict, List, Optional, Tuple, Union
+from typing import Any, ClassVar
 
 import numpy as np
 import pandas as pd
 import xarray as xr
-from traitlets import HasTraits, Unicode
-from traitlets import List as TList
 
+from echemistpy.io.base_reader import BaseReader
+from echemistpy.io.reader_utils import apply_standard_attrs_xrd, merge_infos
 from echemistpy.io.structures import RawData, RawDataInfo
 
 logger = logging.getLogger(__name__)
 
 
-class MSPDReader(HasTraits):
+class MSPDReader(BaseReader):
     """Reader for MSPD XRD .xye files.
 
     Supports reading a single .xye file or a directory containing multiple .xye files.
@@ -28,52 +30,34 @@ class MSPDReader(HasTraits):
 
     # --- Constants ---
     DATE_FORMAT: ClassVar[str] = "%Y-%m-%d_%H:%M:%S"
-    DEFAULT_TECHNIQUE_SINGLE: ClassVar[List[str]] = ["xrd", "in_situ"]
-    DEFAULT_TECHNIQUE_DIR: ClassVar[List[str]] = ["xrd", "operando"]
+    DEFAULT_TECHNIQUE_SINGLE: ClassVar[list[str]] = ["xrd", "in_situ"]
+    DEFAULT_TECHNIQUE_DIR: ClassVar[list[str]] = ["xrd", "operando"]
     INSTRUMENT_NAME: ClassVar[str] = "ALBA_MSPD"
 
     # --- Loader Metadata ---
     supports_directories: ClassVar[bool] = True
     instrument: ClassVar[str] = "alba_mspd"
 
-    # --- Traitlets ---
-    filepath = Unicode()
-    wave_number = Unicode(None, allow_none=True)
-    sample_name = Unicode(None, allow_none=True)
-    start_time = Unicode(None, allow_none=True)
-    operator = Unicode(None, allow_none=True)
-    active_material_mass = Unicode(None, allow_none=True)
-    technique = TList(Unicode(), default_value=None, allow_none=True)
-    # instrument traitlet removed to avoid conflict with ClassVar
-    # if needed, it can be a property or just use the ClassVar
+    def __init__(self, filepath: str | Path | None = None, **kwargs: Any) -> None:
+        """Initialize the MSPD reader.
 
-    def __init__(self, filepath: Optional[Union[str, Path]] = None, **kwargs: Any) -> None:
-        super().__init__(**kwargs)
-        if filepath:
-            self.filepath = str(filepath)
+        Args:
+            filepath: Path to .xye file or directory
+            **kwargs: Additional metadata overrides
+        """
+        # Technique will be determined later based on file vs directory
+        super().__init__(filepath, **kwargs)
 
-    def load(self, **_kwargs: Any) -> Tuple[RawData, RawDataInfo]:
-        """Load MSPD .xye file(s) and return RawData and RawDataInfo.
+    def _load_single_file(self, path: Path, **_kwargs: Any) -> tuple[RawData, RawDataInfo]:
+        """Load a single MSPD .xye file.
+
+        Args:
+            path: Path to the .xye file
+            **kwargs: Additional arguments (unused)
 
         Returns:
             Tuple of (RawData, RawDataInfo)
         """
-        if not self.filepath:
-            raise ValueError("filepath must be set before calling load()")
-
-        path = Path(self.filepath)
-        if not path.exists():
-            raise FileNotFoundError(f"Path not found: {path}")
-
-        if path.is_file():
-            return self._load_single_file(path)
-        if path.is_dir():
-            return self._load_directory(path)
-
-        raise ValueError(f"Path is neither a file nor a directory: {path}")
-
-    def _load_single_file(self, path: Path) -> Tuple[RawData, RawDataInfo]:
-        """Internal method to load a single MSPD .xye file."""
         ds, metadata = self._read_single_xye(path)
 
         # Clean and enhance metadata
@@ -83,8 +67,8 @@ class MSPDReader(HasTraits):
         # Extract wave number
         wave_val = self._extract_wave_number(cleaned_metadata)
 
-        # 单一文件使用 in_situ 技术类型
-        technique = list(self.technique) if self.technique else self.DEFAULT_TECHNIQUE_SINGLE
+        # Use in_situ technique for single file
+        technique = list(self.technique) if self.technique != ["unknown"] else self.DEFAULT_TECHNIQUE_SINGLE
 
         raw_info = RawDataInfo(
             sample_name=self.sample_name or cleaned_metadata.get("sample_name", path.stem),
@@ -100,7 +84,7 @@ class MSPDReader(HasTraits):
         return RawData(data=ds), raw_info
 
     @staticmethod
-    def _clean_metadata(metadata: Dict[str, Any], filepath: Path) -> Dict[str, Any]:
+    def _clean_metadata(metadata: dict[str, Any], filepath: Path) -> dict[str, Any]:
         """Clean and structure metadata from raw header data.
 
         Args:
@@ -110,7 +94,7 @@ class MSPDReader(HasTraits):
         Returns:
             Cleaned metadata dictionary with standardized keys
         """
-        cleaned: Dict[str, Any] = {}
+        cleaned: dict[str, Any] = {}
 
         # Extract start time
         if "Date" in metadata:
@@ -130,29 +114,41 @@ class MSPDReader(HasTraits):
 
         return cleaned
 
-    def _extract_wave_number(self, metadata: Dict[str, Any]) -> Optional[str]:
+    def _extract_wave_number(self, metadata: dict[str, Any]) -> str | None:
         """Extract wave number from metadata or traits.
 
-        Returns wavelength as a string for RawDataInfo.wave_number field.
+        Args:
+            metadata: Metadata dictionary
+
+        Returns:
+            Wavelength as a string, or None
         """
         if self.wave_number:
             return self.wave_number
         wavelength = metadata.get("wavelength")
         return str(wavelength) if wavelength is not None else None
 
-    def _load_directory(self, path: Path) -> Tuple[RawData, RawDataInfo]:
-        """Load all MSPD .xye files in a directory into a DataTree."""
+    def _load_directory(self, path: Path, **_kwargs: Any) -> tuple[RawData, RawDataInfo]:
+        """Load all MSPD .xye files in a directory into a DataTree.
+
+        Args:
+            path: Path to the directory
+            **kwargs: Additional arguments (unused)
+
+        Returns:
+            Tuple of (RawData with DataTree, merged RawDataInfo)
+        """
         xye_files = sorted(path.rglob("*.xye"))
         if not xye_files:
             raise FileNotFoundError(f"No .xye files found in {path}")
 
         # Group files by parent directory
-        groups: Dict[Path, List[Path]] = {}
+        groups: dict[Path, list[Path]] = {}
         for f in xye_files:
             groups.setdefault(f.parent, []).append(f)
 
-        tree_dict: Dict[str, xr.Dataset] = {}
-        all_infos: List[RawDataInfo] = []
+        tree_dict: dict[str, xr.Dataset] = {}
+        all_infos: list[RawDataInfo] = []
 
         for parent, files in groups.items():
             try:
@@ -189,11 +185,8 @@ class MSPDReader(HasTraits):
 
         return RawData(data=tree), root_info
 
-    def _process_directory_group(self, files: List[Path]) -> Tuple[Optional[xr.Dataset], List[RawDataInfo]]:
+    def _process_directory_group(self, files: list[Path]) -> tuple[xr.Dataset | None, list[RawDataInfo]]:
         """Process a group of files in the same directory.
-
-        Loads all files and concatenates them along the 'record' dimension.
-        Adds time coordinates (systime and time_s) based on file timestamps.
 
         Args:
             files: List of .xye file paths in the same directory
@@ -235,10 +228,15 @@ class MSPDReader(HasTraits):
 
         return merged_ds, infos
 
-    def _merge_node_infos(self, infos: List[RawDataInfo], parent_path: Path) -> RawDataInfo:
+    def _merge_node_infos(self, infos: list[RawDataInfo], parent_path: Path) -> RawDataInfo:
         """Merge RawDataInfo objects for a single directory node.
 
-        This is used when merging files within the same directory.
+        Args:
+            infos: List of RawDataInfo objects from files in the same directory
+            parent_path: Parent directory path
+
+        Returns:
+            Merged RawDataInfo
         """
         if not infos:
             return RawDataInfo()
@@ -253,12 +251,12 @@ class MSPDReader(HasTraits):
         wave_numbers = sorted({info.wave_number for info in infos if info.wave_number})
 
         # Use directory-specific technique
-        technique = list(self.technique) if self.technique else self.DEFAULT_TECHNIQUE_DIR
+        technique = list(self.technique) if self.technique != ["unknown"] else self.DEFAULT_TECHNIQUE_DIR
 
         # Build others dict
         others = {
             "n_files": len(infos),
-            "sample_names": sample_names,  # Store all sample names
+            "sample_names": sample_names,
             "filenames": [Path(info.get("file_path", "")).name for info in infos if info.get("file_path")],
         }
 
@@ -281,11 +279,15 @@ class MSPDReader(HasTraits):
             others=others,
         )
 
-    def _merge_infos(self, infos: List[RawDataInfo], root_path: Path) -> RawDataInfo:
+    def _merge_infos(self, infos: list[RawDataInfo], root_path: Path) -> RawDataInfo:
         """Merge multiple RawDataInfo objects from different directories.
 
-        This is used when combining information from multiple subdirectories
-        into the root RawDataInfo.
+        Args:
+            infos: List of RawDataInfo objects from subdirectories
+            root_path: Root path for determining folder name
+
+        Returns:
+            Merged RawDataInfo
         """
         if not infos:
             return RawDataInfo()
@@ -299,47 +301,32 @@ class MSPDReader(HasTraits):
             elif info.sample_name:
                 all_sample_names.append(info.sample_name)
 
-        # Collect unique values
-        operators = sorted({info.operator for info in infos if info.operator})
-        start_times = sorted({info.start_time for info in infos if info.start_time})
-        masses = sorted({info.active_material_mass for info in infos if info.active_material_mass})
-        wave_numbers = sorted({info.wave_number for info in infos if info.wave_number})
-
         # Use directory-specific technique
-        technique = list(self.technique) if self.technique else self.DEFAULT_TECHNIQUE_DIR
+        technique = list(self.technique) if self.technique != ["unknown"] else self.DEFAULT_TECHNIQUE_DIR
 
         # Calculate total files
         total_files = sum(info.others.get("n_files", 1) for info in infos)
 
-        # Determine folder name
-        folder_name = root_path.resolve().name if root_path.name in (".", "..", "") else root_path.name
-
-        # Build combined others dict
-        combined_others = {
-            "n_files": total_files,
-            "sample_names": all_sample_names,
-        }
-
-        # Add lists if multiple unique values
-        if len(operators) > 1:
-            combined_others["all_operators"] = operators
-        if len(masses) > 1:
-            combined_others["all_active_material_masses"] = masses
-        if len(wave_numbers) > 1:
-            combined_others["all_wave_numbers"] = wave_numbers
-
-        return RawDataInfo(
-            sample_name=self.sample_name or folder_name,
+        # Use merge_infos from utils for common logic
+        merged_info = merge_infos(
+            infos,
+            root_path,
+            sample_name_override=self.sample_name,
+            operator_override=self.operator,
+            start_time_override=self.start_time,
+            active_material_mass_override=self.active_material_mass,
+            wave_number_override=self.wave_number,
             technique=technique,
             instrument=self.instrument,
-            operator=self.operator or (operators[0] if len(operators) == 1 else None),
-            start_time=self.start_time or (start_times[0] if len(start_times) == 1 else None),
-            active_material_mass=self.active_material_mass or (masses[0] if len(masses) == 1 else None),
-            wave_number=self.wave_number or (wave_numbers[0] if len(wave_numbers) == 1 else None),
-            others=combined_others,
         )
 
-    def _read_single_xye(self, filepath: Path) -> Tuple[xr.Dataset, Dict[str, Any]]:
+        # Update with MSPD-specific fields
+        merged_info.others["sample_names"] = all_sample_names
+        merged_info.others["n_files"] = total_files
+
+        return merged_info
+
+    def _read_single_xye(self, filepath: Path) -> tuple[xr.Dataset, dict[str, Any]]:
         """Read a single .xye file and return an xarray Dataset and metadata.
 
         Args:
@@ -369,7 +356,7 @@ class MSPDReader(HasTraits):
 
         return ds, metadata
 
-    def _create_dataset(self, df: pd.DataFrame, metadata: Dict[str, Any]) -> xr.Dataset:
+    def _create_dataset(self, df: pd.DataFrame, metadata: dict[str, Any]) -> xr.Dataset:
         """Create a standardized xarray.Dataset from DataFrame and metadata.
 
         Args:
@@ -389,7 +376,7 @@ class MSPDReader(HasTraits):
         )
 
         # Apply standard attributes
-        self._apply_standard_attrs(ds)
+        apply_standard_attrs_xrd(ds)
 
         # Calculate and add d-spacing if wavelength is available
         wave_to_use = self._get_wave_to_use(metadata)
@@ -401,32 +388,8 @@ class MSPDReader(HasTraits):
         return ds
 
     @staticmethod
-    def _apply_standard_attrs(ds: xr.Dataset) -> None:
-        """Apply standard units and long names to Dataset variables.
-
-        Args:
-            ds: xarray.Dataset to modify in-place
-        """
-        attr_map = {
-            "intensity": {"units": "counts", "long_name": "Intensity"},
-            "intensity_error": {"units": "counts", "long_name": "Intensity Error"},
-            "2theta": {"units": "degree", "long_name": "2-Theta"},
-        }
-
-        for var, attrs in attr_map.items():
-            if var in ds:
-                ds[var].attrs.update(attrs)
-            if var in ds.coords:
-                ds.coords[var].attrs.update(attrs)
-
-    @staticmethod
-    def _parse_header(filepath: Path) -> Dict[str, Any]:
+    def _parse_header(filepath: Path) -> dict[str, Any]:
         """Parse header lines from .xye file for metadata.
-
-        Extracts information from lines starting with '#'.
-        Currently extracts:
-        - Wave: X-ray wavelength in Angstroms
-        - Date: Acquisition timestamp
 
         Args:
             filepath: Path to the .xye file
@@ -434,7 +397,7 @@ class MSPDReader(HasTraits):
         Returns:
             Dictionary with extracted metadata
         """
-        metadata = {}
+        metadata: dict[str, Any] = {}
         with open(filepath, "r", encoding="utf-8") as f:
             for line in f:
                 if not line.startswith("#"):
@@ -447,12 +410,8 @@ class MSPDReader(HasTraits):
                     metadata["Date"] = match.group(1)
         return metadata
 
-    def _get_wave_to_use(self, metadata: Dict[str, Any]) -> Optional[float]:
+    def _get_wave_to_use(self, metadata: dict[str, Any]) -> float | None:
         """Determine the wavelength to use for d-spacing calculation.
-
-        Priority:
-        1. User-provided wave_number traitlet
-        2. Wave value from file metadata
 
         Args:
             metadata: Metadata dictionary from file
@@ -500,3 +459,12 @@ class MSPDReader(HasTraits):
         if not date_str:
             raise ValueError("Empty date string")
         return datetime.strptime(date_str, cls.DATE_FORMAT)
+
+    @staticmethod
+    def _get_file_extension() -> str:
+        """Get the file extension for this reader.
+
+        Returns:
+            File extension including the dot
+        """
+        return ".xye"

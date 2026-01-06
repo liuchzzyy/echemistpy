@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Optional, TypeVar, cast
+from typing import Any, Optional, TypeVar
 
 import pandas as pd
 import xarray as xr
@@ -19,30 +19,33 @@ class MetadataInfoMixin:
     """
 
     def to_dict(self) -> dict[str, Any]:
-        """Convert metadata to dictionary representation.
+        """将元数据转换为字典表示。
 
         Returns:
-            Dictionary containing all metadata fields (excluding None values)
+            包含所有元数据字段的字典（排除 None 值）
         """
-        return {k: v for k, v in cast(HasTraits, self).trait_values().items() if v is not None}
+        # trait_values() 返回实例的所有 trait 值
+        # 无需 cast，因为 self 继承自 HasTraits
+        trait_values = self.trait_values()
+        return {k: v for k, v in trait_values.items() if v is not None}
 
     def get(self, key: str, default: Any = None) -> Any:
-        """Get metadata value by key.
+        """通过键获取元数据值。
 
-        Checks standard fields first, then dynamic storage (parameters, others).
+        首先检查标准字段，然后检查动态存储（parameters、others）。
 
         Args:
-            key: Metadata key to retrieve
-            default: Default value if key not found
+            key: 要检索的元数据键
+            default: 如果键未找到时的默认值
 
         Returns:
-            Metadata value or default
+            元数据值或默认值
         """
-        # Check standard fields first
-        if hasattr(self, key) and cast(HasTraits, self).has_trait(key):
+        # 首先检查标准字段
+        if self.has_trait(key):
             return getattr(self, key)
 
-        # Check dynamic storage locations in order of precedence
+        # 按优先级检查动态存储位置
         for container_name in ["parameters", "others"]:
             container = getattr(self, container_name, None)
             if isinstance(container, dict) and key in container:
@@ -51,15 +54,14 @@ class MetadataInfoMixin:
         return default
 
     def update(self, other: dict[str, Any]) -> None:
-        """Update metadata with new key-value pairs.
+        """用新的键值对更新元数据。
 
-        Updates standard fields if they exist, otherwise updates the appropriate
-        dynamic storage (parameters or others).
+        如果存在标准字段则更新，否则更新相应的动态存储（parameters 或 others）。
 
         Args:
-            other: Dictionary of metadata to add/update
+            other: 要添加/更新的元数据字典
         """
-        # Determine dynamic container
+        # 确定动态容器
         container = None
         if hasattr(self, "parameters"):
             container = self.parameters
@@ -67,46 +69,44 @@ class MetadataInfoMixin:
             container = self.others
 
         for key, value in other.items():
-            if cast(HasTraits, self).has_trait(key):
+            if self.has_trait(key):
                 setattr(self, key, value)
             elif container is not None and isinstance(container, dict):
-                # Cast to dict to satisfy type checker
-                cast(dict, container)[key] = value
+                container[key] = value
 
 
 class XarrayDataMixin:
-    """Mixin providing common xarray.Dataset and xarray.DataTree operations.
+    """提供通用 xarray.Dataset 和 xarray.DataTree 操作的 Mixin。
 
-    This mixin eliminates code duplication across RawData and ResultsData
-    classes by providing shared functionality for both Dataset and DataTree backends.
+        此 Mixin 通过为 RawData 和 ResultsData 类提供共享功能来消除代码重复，
+    支持 Dataset 和 DataTree 两种后端。
     """
 
-    data: xr.Dataset | xr.DataTree  # Type hint for IDE support
+    data: xr.Dataset | xr.DataTree  # IDE 类型提示支持
 
     def copy(self, deep: bool = True) -> Any:
-        """Create a copy of the data object.
+        """创建数据对象的副本。
 
         Args:
-            deep: Whether to perform a deep copy of the underlying data
+            deep: 是否对底层数据执行深拷贝
 
         Returns:
-            A new instance of the same class with copied data
+            具有复制数据的同类新实例
         """
-        # Use type(self) and cast to Any to avoid ty errors with constructor arguments
-        cls = cast(Any, type(self))
-        return cls(data=self.data.copy(deep=deep))
+        # 使用 type(self) 避免硬编码类名
+        return type(self)(data=self.data.copy(deep=deep))
 
     def to_pandas(self) -> pd.DataFrame | pd.Series:
-        """Convert data to pandas DataFrame or Series.
+        """将数据转换为 pandas DataFrame 或 Series。
 
-        For Datasets, this wraps xarray's to_pandas().
-        For DataTrees, this returns the pandas representation of the root dataset.
+        对于 Dataset，这包装了 xarray 的 to_pandas()。
+        对于 DataTree，返回根数据集的 pandas 表示。
 
         Returns:
-            pandas.DataFrame or pandas.Series
+            pandas.DataFrame 或 pandas.Series
 
         Raises:
-            ValueError: If the data has more than 1 dimension or is a DataTree without root data
+            ValueError: 如果数据超过 1 维或是没有根数据的 DataTree
         """
         ds = self.data
         if isinstance(ds, xr.DataTree):
@@ -114,7 +114,7 @@ class XarrayDataMixin:
                 raise ValueError("DataTree has no root dataset to convert to pandas.")
             ds = ds.dataset
 
-        # Check number of dimensions
+        # 检查维度数
         n_dims = len(ds.dims)
 
         if n_dims > 1:
@@ -126,10 +126,10 @@ class XarrayDataMixin:
 
     @property
     def variables(self) -> list[str]:
-        """Get list of all variable names in the root dataset.
+        """获取根数据集中所有变量名的列表。
 
         Returns:
-            List of variable names
+            变量名列表
         """
         ds = self.data
         if isinstance(ds, xr.DataTree):
@@ -140,10 +140,10 @@ class XarrayDataMixin:
 
     @property
     def coords(self) -> list[str]:
-        """Get list of all coordinate names in the root dataset.
+        """获取根数据集中所有坐标名的列表。
 
         Returns:
-            List of coordinate names
+            坐标名列表
         """
         ds = self.data
         if isinstance(ds, xr.DataTree):
@@ -153,44 +153,44 @@ class XarrayDataMixin:
         return [str(k) for k in ds.coords]
 
     def get_variables(self) -> list[str]:
-        """Get list of all variable names in the dataset."""
+        """获取数据集中所有变量名的列表。"""
         return self.variables
 
     def get_coords(self) -> list[str]:
-        """Get list of all coordinate names in the dataset."""
+        """获取数据集中所有坐标名的列表。"""
         return self.coords
 
     def select(self, variables: Optional[list[str]] = None) -> xr.Dataset | xr.DataTree:
-        """Select specific variables from the dataset.
+        """从数据集中选择特定变量。
 
         Args:
-            variables: List of variable names to select, or None for all
+            variables: 要选择的变量名列表，或 None 表示全部
 
         Returns:
-            xarray.Dataset or xarray.DataTree with selected variables
+            包含所选变量的 xarray.Dataset 或 xarray.DataTree
         """
         if variables is None:
             return self.data
 
-        # Handle Dataset and DataTree separately to satisfy type checker
+        # 分别处理 Dataset 和 DataTree
         if isinstance(self.data, xr.Dataset):
             result = self.data[variables]
             if isinstance(result, xr.DataArray):
                 return result.to_dataset()
             return result
         else:
-            # For DataTree, indexing with list[str] selects nodes
-            # Cast to Any then to DataTree to satisfy type checker
-            return cast(xr.DataTree, cast(Any, self.data)[variables])
+            # 对于 DataTree，使用 list[str] 索引选择节点
+            # 这里需要使用 Any 作为中间类型，因为 mypy 无法推断 DataTree 的索引返回类型
+            return self.data[variables]  # type: ignore[return-value]
 
     def __getitem__(self, key: str) -> xr.DataArray | xr.DataTree:
-        """Access a variable or node by name.
+        """按名称访问变量或节点。
 
         Args:
-            key: Variable or node name
+            key: 变量或节点名称
 
         Returns:
-            xarray.DataArray or xarray.DataTree
+            xarray.DataArray 或 xarray.DataTree
         """
         return self.data[key]
 
