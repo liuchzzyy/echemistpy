@@ -6,8 +6,8 @@ from .echem import GalvanostaticAnalyzer
 from .registry import TechniqueAnalyzer, TechniqueRegistry, create_default_registry
 
 __all__ = [
+    "GalvanostaticAnalyzer",
     "TechniqueAnalyzer",
     "TechniqueRegistry",
     "create_default_registry",
-    "GalvanostaticAnalyzer",
 ]

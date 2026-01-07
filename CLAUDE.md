@@ -45,6 +45,12 @@ uv run ty check
 
 # Run tests
 uv run pytest
+
+# Run a single test
+uv run pytest tests/integration/test_io_with_real_data.py::test_biologic_gpcl
+
+# Run tests with coverage
+uv run pytest --cov=echemistpy
 ```
 
 ### Git Commit Conventions
@@ -59,18 +65,19 @@ uv run pytest
 ```
 Raw Data Files → IOPluginManager → RawData + RawDataInfo
                                         ↓
-                                 TechniqueAnalyzer
+                                 TechniqueAnalyzer.analyze()
                                         ↓
-                                ResultsData + ResultsDataInfo
+                                AnalysisData + AnalysisDataInfo
 ```
 
 ### Key Components
 
 **Data Structures** (`src/echemistpy/io/structures.py`)
 - `RawData` + `RawDataInfo`: Container for measurement data and metadata
-- `ResultsData` + `ResultsDataInfo`: Container for processed results
+- `AnalysisData` + `AnalysisDataInfo`: Universal container for all analysis results
 - Backend: `xarray.Dataset` for flat data, `xarray.DataTree` for hierarchical data (e.g., XRD scans at different temperatures)
 - Metadata: Uses traitlets for validation and dynamic parameter storage
+- All containers inherit from `BaseData`/`BaseInfo` with shared mixins (`XarrayDataMixin`, `MetadataInfoMixin`)
 
 **I/O System** (`src/echemistpy/io/`)
 - `load()`: Unified loading interface with auto-format detection
@@ -79,9 +86,30 @@ Raw Data Files → IOPluginManager → RawData + RawDataInfo
 - Supports both files and directories as input
 
 **Processing System** (`src/echemistpy/processing/`)
-- `TechniqueAnalyzer`: Abstract base class for all analyzers (implements `compute()`, optional `validate()` and `preprocess()`)
-- `TechniqueRegistry`: Maps technique types to analyzer implementations
-- `AnalysisPipeline`: Orchestrates batch processing workflows across multiple samples
+- `TechniqueAnalyzer`: Abstract base class for all analyzers
+  - `analyze()`: Template method orchestrating validation → preprocessing → computation → metadata inheritance
+  - `compute()`: Abstract method that MUST return `tuple[AnalysisData, AnalysisDataInfo]`
+  - `validate()`: Optional data validation (checks `required_columns`)
+  - `preprocess()`: Optional data preprocessing
+- `TechniqueRegistry`: Maps technique and instrument identifiers to analyzer instances
+- `AnalysisPipeline`: High-level orchestration with logging and error handling
+
+### Unified Analyzer Interface
+
+All analyzers follow a single, consistent pattern:
+
+**Base Class Responsibilities** (`TechniqueAnalyzer.analyze()`):
+1. Validates input data
+2. Preprocesses data (on a copy)
+3. Calls `compute()` to get `AnalysisData + AnalysisDataInfo`
+4. Inherits metadata from `raw_info` (sample_name, start_time, operator, etc.)
+5. Updates `technique` field
+6. Returns `AnalysisData + AnalysisDataInfo`
+
+**Subclass Responsibilities**:
+- Implement `compute()` to return `tuple[AnalysisData, AnalysisDataInfo]`
+- Optionally override `validate()` and `preprocess()`
+- Set `technique` class attribute and `required_columns` tuple
 
 ### Supported Instruments & Formats
 
@@ -138,27 +166,50 @@ if raw_data.is_tree:
 
 ### Implementing Analyzers
 
+All analyzers follow the same pattern - return `AnalysisData + AnalysisDataInfo`:
+
 ```python
-from echemistpy.processing.analyzers.base import TechniqueAnalyzer
+from echemistpy.processing.analyzers.registry import TechniqueAnalyzer
+from echemistpy.io.structures import AnalysisData, AnalysisDataInfo, RawData
 
 class MyAnalyzer(TechniqueAnalyzer):
     technique = "my_technique"  # Register in TechniqueRegistry
     required_columns = ("Ewe/V", "<I>/mA")  # Validate input data
 
-    def compute(self, data, **kwargs):
-        # Main calculation logic
-        summary = {"mean": data.mean().values}
-        results_table = {"processed": data.to_dataframe()}
-        return summary, results_table
+    def compute(self, raw_data: RawData) -> tuple[AnalysisData, AnalysisDataInfo]:
+        # Extract and process data
+        ds = raw_data.data
 
-    def validate(self, data):
-        # Optional: Validate data before processing
-        super().validate(data)
+        # Perform calculations
+        result_ds = ds.assign({
+            "processed": ds["Ewe/V"] * ds["<I>/mA"]
+        })
 
-    def preprocess(self, data):
-        # Optional: Preprocess data (e.g., filtering, smoothing)
-        return data
+        # Package results
+        analysis_data = AnalysisData(data=result_ds)
+        analysis_info = AnalysisDataInfo(parameters={
+            "scaling_factor": 1.0,
+            "method": "simple_product"
+        })
+
+        return analysis_data, analysis_info
+
+    def validate(self, raw_data: RawData) -> None:
+        # Optional: Add custom validation
+        super().validate(raw_data)
+        # Add your validation logic here
+
+    def preprocess(self, raw_data: RawData) -> RawData:
+        # Optional: Add custom preprocessing
+        # Return a modified copy
+        return raw_data
 ```
+
+**Key Points**:
+- Base class `analyze()` handles metadata inheritance automatically
+- You ONLY implement `compute()` to return `AnalysisData + AnalysisDataInfo`
+- No need to manually copy `sample_name`, `start_time`, etc. - base class does it
+- Works for all analysis types: electrochemistry, XRD, XPS, etc.
 
 ## Extension Points
 
@@ -172,10 +223,12 @@ class MyAnalyzer(TechniqueAnalyzer):
 ### Adding New Analyzers
 
 1. Inherit from `TechniqueAnalyzer` in `src/echemistpy/processing/analyzers/`
-2. Implement `compute()` method returning `(summary_dict, results_table_dict)`
+2. Implement `compute()` method returning `tuple[AnalysisData, AnalysisDataInfo]`
 3. Optionally override `validate()` and `preprocess()`
 4. Set `technique` class attribute and `required_columns` tuple
-5. Register in `TechniqueRegistry` or use custom registry
+5. Register in `create_default_registry()` or use custom registry
+
+**Note**: All analyzers MUST return `AnalysisData + AnalysisDataInfo` from `compute()`. The base class handles metadata inheritance and packaging automatically.
 
 ## Code Quality Standards
 
@@ -184,6 +237,7 @@ class MyAnalyzer(TechniqueAnalyzer):
 - Extensive linting: Pyflakes (F), PEP 8 (E/W), flake8-bugbear (B), pep8-naming (N), pylint (PL), security (S)
 - Auto-fix imports with isort (I)
 - Per-file ignores for tests: `S101` (assert usage), `ARG` (unused args)
+- Use `# noqa` comments for justified exceptions (complex methods, etc.)
 
 **Ty Configuration:**
 - Strict type checking required
@@ -194,7 +248,7 @@ class MyAnalyzer(TechniqueAnalyzer):
 ```
 src/echemistpy/
 ├── io/                      # Data structures & I/O
-│   ├── structures.py        # RawData, ResultsData, traitlets configs
+│   ├── structures.py        # RawData, ResultsData, AnalysisData, traitlets configs
 │   ├── plugin_manager.py    # IOPluginManager with pluggy hooks
 │   ├── loaders.py           # Unified load() interface
 │   └── plugins/             # Reader implementations by technique
@@ -203,8 +257,10 @@ src/echemistpy/
 │       └── ...
 ├── processing/              # Analysis & preprocessing
 │   ├── analyzers/           # TechniqueAnalyzer implementations
-│   └── analysis/            # Analysis-specific modules
-├── pipelines/               # Orchestration (AnalysisPipeline)
+│   │   ├── registry.py      # Base class and registry
+│   │   └── echem.py         # GalvanostaticAnalyzer (returns AnalysisData)
+│   └── pipeline.py          # AnalysisPipeline orchestration
+├── pipelines/               # Additional orchestration (if any)
 └── utils/                   # Utilities (visualization, helpers)
 ```
 
@@ -214,5 +270,6 @@ src/echemistpy/
 - Metadata uses traitlets for runtime validation and type safety
 - Plugin system uses pluggy for flexible extension registration
 - Public APIs use English; internal code uses Chinese comments
+- **All analyzers** return `AnalysisData + AnalysisDataInfo` - this is the universal interface
+- Base class `analyze()` method handles metadata inheritance automatically from `raw_info`
 - Report issues on GitHub Issues tracker
-- Environment name in Conda: `echemistpy` (defined in `environment.yml`)

@@ -4,9 +4,9 @@ from .analyzers.registry import TechniqueAnalyzer, TechniqueRegistry, create_def
 from .pipeline import AnalysisPipeline, run_analysis
 
 __all__ = [
+    "AnalysisPipeline",
     "TechniqueAnalyzer",
     "TechniqueRegistry",
     "create_default_registry",
-    "AnalysisPipeline",
     "run_analysis",
 ]

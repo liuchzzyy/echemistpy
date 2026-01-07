@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any, Optional, Tuple
 
 from echemistpy.io import load
-from echemistpy.io.structures import ResultsData, ResultsDataInfo
-from .analyzers.registry import create_default_registry, TechniqueRegistry
+from echemistpy.io.structures import AnalysisData, AnalysisDataInfo
+
+from .analyzers.registry import TechniqueRegistry, create_default_registry
+
+logger = logging.getLogger(__name__)
 
 
 class AnalysisPipeline:
@@ -31,7 +35,7 @@ class AnalysisPipeline:
         technique: Optional[str] = None,
         instrument: Optional[str] = None,
         **kwargs: Any,
-    ) -> Tuple[ResultsData, ResultsDataInfo]:
+    ) -> Tuple[AnalysisData, AnalysisDataInfo]:
         """Run the full pipeline for a single file.
 
         Args:
@@ -41,13 +45,27 @@ class AnalysisPipeline:
             **kwargs: Additional arguments passed to both loader and analyzer
 
         Returns:
-            Tuple of (ResultsData, ResultsDataInfo)
+            Tuple of (AnalysisData, AnalysisDataInfo)
 
         Raises:
             ValueError: If technique cannot be determined or analyzer is missing
+            FileNotFoundError: If the specified path does not exist
         """
+        # 验证输入路径
+        path_obj = Path(path)
+        if not path_obj.exists():
+            raise FileNotFoundError(f"Data file not found: {path}")
+
+        logger.info("Starting analysis pipeline for: %s", path)
+
         # 1. Load data
-        raw_data, raw_info = load(path, technique=technique, instrument=instrument, **kwargs)
+        try:
+            logger.debug("Loading data from %s", path)
+            raw_data, raw_info = load(path, technique=technique, instrument=instrument, **kwargs)
+            logger.debug("Data loaded successfully. Technique: %s, Instrument: %s", raw_info.technique, raw_info.instrument)
+        except Exception as e:
+            logger.error("Failed to load data from %s: %s", path, e)
+            raise
 
         # 2. Determine technique
         if technique is None:
@@ -55,17 +73,32 @@ class AnalysisPipeline:
             techniques = raw_info.technique
             if techniques and techniques[0] != "Unknown":
                 technique = techniques[0]
+                logger.debug("Auto-detected technique: %s", technique)
             else:
-                raise ValueError(f"Could not detect technique for {path}. Please specify 'technique' explicitly.")
+                error_msg = f"Could not detect technique for {path}. Please specify 'technique' explicitly."
+                logger.error(error_msg)
+                raise ValueError(error_msg)
 
         # 3. Get analyzer
         try:
             analyzer = self.registry.get_analyzer(technique, raw_info.instrument)
+            logger.debug("Using analyzer: %s", analyzer.name)
         except KeyError as exc:
-            raise ValueError(f"No analyzer registered for technique '{technique}' and instrument '{raw_info.instrument}'.") from exc
+            error_msg = f"No analyzer registered for technique '{technique}' and instrument '{raw_info.instrument}'."
+            logger.error(error_msg)
+            available_techniques = self.registry.available()
+            logger.info("Available techniques: %s", available_techniques)
+            raise ValueError(error_msg) from exc
 
         # 4. Analyze
-        return analyzer.analyze(raw_data, raw_info, **kwargs)
+        try:
+            logger.debug("Running analysis with %s", analyzer.name)
+            results_data, results_info = analyzer.analyze(raw_data, raw_info, **kwargs)
+            logger.info("Analysis completed successfully for: %s", path)
+            return results_data, results_info
+        except Exception as e:
+            logger.error("Analysis failed for %s: %s", path, e)
+            raise
 
 
 def run_analysis(
@@ -73,7 +106,7 @@ def run_analysis(
     technique: Optional[str] = None,
     instrument: Optional[str] = None,
     **kwargs: Any,
-) -> Tuple[ResultsData, ResultsDataInfo]:
+) -> Tuple[AnalysisData, AnalysisDataInfo]:
     """Convenience function to run analysis on a file using default settings.
 
     Args:
@@ -83,7 +116,7 @@ def run_analysis(
         **kwargs: Additional arguments
 
     Returns:
-        Tuple of (ResultsData, ResultsDataInfo)
+        Tuple of (AnalysisData, AnalysisDataInfo)
     """
     pipeline = AnalysisPipeline()
     return pipeline.run(path, technique=technique, instrument=instrument, **kwargs)

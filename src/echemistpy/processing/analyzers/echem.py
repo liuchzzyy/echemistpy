@@ -156,7 +156,7 @@ class GalvanostaticAnalyzer(TechniqueAnalyzer):
         else:
             return np.asarray(time_array, dtype=float)
 
-    def validate(self, raw_data: RawData) -> None:
+    def validate(self, raw_data: RawData) -> None:  # noqa: PLR6301
         """验证数据是否适合此分析器.
 
         要求:
@@ -255,7 +255,7 @@ class GalvanostaticAnalyzer(TechniqueAnalyzer):
 
         cycles = {}
         # 获取主维度名称（第一个维度）
-        main_dim = list(ds.sizes.keys())[0]
+        main_dim = next(iter(ds.sizes.keys()))
         for cycle_id in unique_cycles:
             cycle_int = int(cycle_id)
             mask = cycle_numbers == cycle_id
@@ -263,7 +263,7 @@ class GalvanostaticAnalyzer(TechniqueAnalyzer):
 
         return cycles
 
-    def _calculate_ce(self, ds: xr.Dataset) -> pd.DataFrame:
+    def _calculate_ce(self, ds: xr.Dataset) -> pd.DataFrame:  # noqa: PLR0912, PLR0914, PLR0915
         """计算每个循环的库伦效率.
 
         根据电流方向判断充电和放电过程，根据 ce_order 参数计算库伦效率：
@@ -279,7 +279,7 @@ class GalvanostaticAnalyzer(TechniqueAnalyzer):
         Raises:
             ValueError: 如果缺少必需的列或 ce_order 值无效
         """
-        if self.ce_order not in ["discharge", "charge"]:
+        if self.ce_order not in {"discharge", "charge"}:
             raise ValueError(f"ce_order 必须是 'discharge' 或 'charge', 但得到: {self.ce_order}")
         if "cycle_number" not in ds.coords and "cycle_number" not in ds.data_vars:
             raise ValueError("数据集中未找到 cycle_number 列")
@@ -408,7 +408,139 @@ class GalvanostaticAnalyzer(TechniqueAnalyzer):
 
         return pd.DataFrame(results)
 
-    def compute(self, raw_data: RawData) -> tuple[AnalysisData, AnalysisDataInfo]:
+    def _normalize_sequence(self, data: np.ndarray, norm_min: float, norm_max: float) -> np.ndarray:  # noqa: PLR6301
+        """归一化序列到指定范围.
+
+        Args:
+            data: 输入数据数组
+            norm_min: 归一化范围最小值
+            norm_max: 归一化范围最大值
+
+        Returns:
+            归一化后的数组
+        """
+        if data.size > 0:
+            d_min, d_max = data.min(), data.max()
+            if d_max > d_min:
+                return norm_min + (data - d_min) / (d_max - d_min) * (norm_max - norm_min)
+            else:
+                return np.full_like(data, norm_min)
+        return data
+
+    def _build_2d_result_dataset(  # noqa: PLR0913, PLR0917
+        self,
+        ds: xr.Dataset,
+        cycles_dict: dict[int, xr.Dataset],
+        time_key: str,
+        pot_key: str | None,
+        cur_key: str,
+        cap_key: str | None,
+        capacity: np.ndarray | None,
+        normalized_capacity: np.ndarray | None,
+        norm_min: float,
+        norm_max: float,
+    ) -> xr.Dataset:
+        """构建二维结果数据集（按 cycle_number 组织）.
+
+        Args:
+            ds: 原始数据集
+            cycles_dict: 按循环分割的数据字典
+            time_key: 时间列名
+            pot_key: 电位列名（可选）
+            cur_key: 电流列名
+            cap_key: 容量列名（可选）
+            capacity: 容量数组（可选）
+            normalized_capacity: 归一化容量数组（可选）
+            norm_min: 归一化范围最小值
+            norm_max: 归一化范围最大值
+
+        Returns:
+            二维结果数据集
+        """
+        cycle_numbers = sorted(cycles_dict.keys())
+        dim = ds[cur_key].dims[0]
+        max_records = max(cycles_dict[c].sizes[dim] for c in cycle_numbers)
+
+        def create_2d_array(data_getter):
+            """创建二维数组，从每个 cycle 获取数据."""
+            arr = np.full((len(cycle_numbers), max_records), np.nan)
+            for i, cycle_num in enumerate(cycle_numbers):
+                cycle_ds = cycles_dict[cycle_num]
+                data = data_getter(cycle_ds)
+                arr[i, : len(data)] = data
+            return arr
+
+        # 构建二维数据变量
+        result_vars = {
+            "time_s": (
+                ["cycle_number", "record"],
+                create_2d_array(lambda c: self._get_numeric_time(c[time_key].values)),
+            ),
+            "normalized_time": (
+                ["cycle_number", "record"],
+                create_2d_array(
+                    lambda c: self._normalize_sequence(
+                        self._get_numeric_time(c[time_key].values),
+                        norm_min,
+                        norm_max,
+                    )
+                ),
+            ),
+        }
+
+        if pot_key:
+            result_vars["voltage_v"] = (["cycle_number", "record"], create_2d_array(lambda c: c[pot_key].values))
+
+        result_vars["current_ua"] = (["cycle_number", "record"], create_2d_array(lambda c: c[cur_key].values))
+
+        if capacity is not None:
+            result_vars["capacity_uah"] = (
+                ["cycle_number", "record"],
+                create_2d_array(lambda c: c[cap_key].values if cap_key else np.array([])),
+            )
+            if normalized_capacity is not None:
+                # 对每个 cycle 单独归一化
+                def norm_cap_2d(c):
+                    if cap_key and cap_key in c:
+                        cap_vals = c[cap_key].values
+                        if len(cap_vals) > 0:
+                            return self._normalize_sequence(cap_vals, norm_min, norm_max)
+                    return np.array([])
+
+                result_vars["normalized_capacity"] = (["cycle_number", "record"], create_2d_array(norm_cap_2d))
+
+        # 创建坐标
+        coords = {"cycle_number": cycle_numbers, "record": np.arange(max_records)}
+
+        return xr.Dataset(result_vars, coords=coords)
+
+    def _build_1d_result_dataset(  # noqa: PLR6301
+        self,
+        ds: xr.Dataset,
+        normalized_time: np.ndarray,
+        normalized_capacity: np.ndarray | None,
+        dim: str,
+    ) -> xr.Dataset:
+        """构建一维结果数据集.
+
+        Args:
+            ds: 原始数据集
+            normalized_time: 归一化时间数组
+            normalized_capacity: 归一化容量数组（可选）
+            dim: 主维度名称
+
+        Returns:
+            一维结果数据集
+        """
+        result_ds = ds.copy()
+        result_ds["normalized_time"] = (dim, normalized_time)
+
+        if normalized_capacity is not None:
+            result_ds["normalized_capacity"] = (dim, normalized_capacity)
+
+        return result_ds
+
+    def compute(self, raw_data: RawData) -> tuple[AnalysisData, AnalysisDataInfo]:  # noqa: PLR0914
         """计算累计电荷(容量)、电位统计和库伦效率.
 
         此函数：
@@ -461,25 +593,8 @@ class GalvanostaticAnalyzer(TechniqueAnalyzer):
 
         # 2. 归一化处理
         norm_min, norm_max = self.normalization_range[0], self.normalization_range[1]
-
-        # 归一化时间
-        if t_numeric.size > 0:
-            t_min, t_max = t_numeric.min(), t_numeric.max()
-            if t_max > t_min:
-                normalized_time = norm_min + (t_numeric - t_min) / (t_max - t_min) * (norm_max - norm_min)
-            else:
-                normalized_time = np.full_like(t_numeric, norm_min)
-        else:
-            normalized_time = t_numeric
-
-        # 归一化容量（如果存在）
-        normalized_capacity = None
-        if capacity is not None and capacity.size > 0:
-            cap_min, cap_max = capacity.min(), capacity.max()
-            if cap_max > cap_min:
-                normalized_capacity = norm_min + (capacity - cap_min) / (cap_max - cap_min) * (norm_max - norm_min)
-            else:
-                normalized_capacity = np.full_like(capacity, norm_min)
+        normalized_time = self._normalize_sequence(t_numeric, norm_min, norm_max)
+        normalized_capacity = self._normalize_sequence(capacity, norm_min, norm_max) if capacity is not None else None
 
         # 电位统计信息
         start_potential = float(potential[0]) if potential.size else float("nan")
@@ -490,110 +605,59 @@ class GalvanostaticAnalyzer(TechniqueAnalyzer):
         # 3. 库伦效率计算（如果启用且存在 cycle_number）
         ce_results = None
         has_cycle = "cycle_number" in ds.coords or "cycle_number" in ds.data_vars
-        
+
         if self.calculate_ce and has_cycle:
             try:
                 ce_df = self._calculate_ce(ds)
-                ce_results = ce_df.to_dict('records')
+                ce_results = ce_df.to_dict("records")
             except Exception as e:
                 # CE 计算失败不应该影响其他分析
                 print(f"警告: 库伦效率计算失败: {e}")
                 ce_results = None
-        
-        # 检查是否有 cycle_number 用于重构为二维数据
+
+        # 4. 构建结果数据集
         if has_cycle:
             # 按 cycle 重构为二维数据 (cycle_number, record)
             cycles_dict = self.split_by_cycle(ds)
-            cycle_numbers = sorted(cycles_dict.keys())
-            
-            # 找到最大的 record 数
-            max_records = max(cycles_dict[c].sizes[dim] for c in cycle_numbers)
-            
-            # 准备二维数组（填充 NaN）
-            def create_2d_array(cycle_data_getter):
-                """创建二维数组，从每个 cycle 获取数据"""
-                arr = np.full((len(cycle_numbers), max_records), np.nan)
-                for i, cycle_num in enumerate(cycle_numbers):
-                    cycle_ds = cycles_dict[cycle_num]
-                    data = cycle_data_getter(cycle_ds)
-                    arr[i, :len(data)] = data
-                return arr
-            
-            # 构建二维数据变量
-            result_vars = {
-                "time_s": (["cycle_number", "record"], create_2d_array(lambda c: self._get_numeric_time(c[time_key].values if time_key in c.coords else c[time_key].values))),
-                "normalized_time": (["cycle_number", "record"], create_2d_array(lambda c: norm_min + (self._get_numeric_time(c[time_key].values if time_key in c.coords else c[time_key].values) - self._get_numeric_time(c[time_key].values if time_key in c.coords else c[time_key].values).min()) / (self._get_numeric_time(c[time_key].values if time_key in c.coords else c[time_key].values).max() - self._get_numeric_time(c[time_key].values if time_key in c.coords else c[time_key].values).min() + 1e-10) * (norm_max - norm_min))),
-            }
-            
-            if pot_key:
-                result_vars["voltage_v"] = (["cycle_number", "record"], create_2d_array(lambda c: c[pot_key].values))
-            
-            result_vars["current_ua"] = (["cycle_number", "record"], create_2d_array(lambda c: c[cur_key].values))
-            
-            if capacity is not None:
-                result_vars["capacity_uah"] = (["cycle_number", "record"], create_2d_array(lambda c: c[cap_key].values if cap_key else np.array([])))
-                if normalized_capacity is not None:
-                    # 对每个 cycle 单独归一化
-                    def norm_cap_2d(c):
-                        if cap_key and cap_key in c:
-                            cap_vals = c[cap_key].values
-                            if len(cap_vals) > 0:
-                                cap_min_c, cap_max_c = cap_vals.min(), cap_vals.max()
-                                if cap_max_c > cap_min_c:
-                                    return norm_min + (cap_vals - cap_min_c) / (cap_max_c - cap_min_c) * (norm_max - norm_min)
-                        return np.array([])
-                    result_vars["normalized_capacity"] = (["cycle_number", "record"], create_2d_array(norm_cap_2d))
-            
-            # 创建坐标
-            coords = {
-                "cycle_number": cycle_numbers,
-                "record": np.arange(max_records)
-            }
-            
-            result_ds = xr.Dataset(result_vars, coords=coords)
-            
+            result_ds = self._build_2d_result_dataset(
+                ds=ds,
+                cycles_dict=cycles_dict,
+                time_key=time_key,
+                pot_key=pot_key,
+                cur_key=cur_key,
+                cap_key=cap_key,
+                capacity=capacity,
+                normalized_capacity=normalized_capacity,
+                norm_min=norm_min,
+                norm_max=norm_max,
+            )
+
             # 添加库伦效率数据（如果有）
             if ce_results is not None and len(ce_results) > 0:
-                # 提取 CE 数据为数组
+                cycle_numbers = sorted(cycles_dict.keys())
                 ce_df = pd.DataFrame(ce_results)
-                # 按 cycle_number 排序并对齐
-                ce_df = ce_df.set_index('cycle_number').reindex(cycle_numbers)
-                
+                ce_df = ce_df.set_index("cycle_number").reindex(cycle_numbers)
+
                 result_ds["coulombic_efficiency_%"] = (["cycle_number"], ce_df["coulombic_efficiency_%"].values)
                 result_ds["charge_capacity_cal"] = (["cycle_number"], ce_df["charge_capacity_cal"].values)
                 result_ds["discharge_capacity_cal"] = (["cycle_number"], ce_df["discharge_capacity_cal"].values)
         else:
             # 没有 cycle_number，保持一维结构
-            result_ds = ds.copy()
-            
-            # 添加归一化时间
-            result_ds["normalized_time"] = (dim, normalized_time)
-            
-            # 添加归一化容量（如果存在）
-            if normalized_capacity is not None:
-                result_ds["normalized_capacity"] = (dim, normalized_capacity)
-        
-        # 构建 AnalysisDataInfo - 只保留必要参数（CE数据已在 Dataset 中）
-        analysis_params = {
+            result_ds = self._build_1d_result_dataset(ds, normalized_time, normalized_capacity, dim)
+
+        # 构建 parameters 字典（包含标量结果和参数）
+        parameters = {
+            "start_potential_V": start_potential,
+            "end_potential_V": end_potential,
+            "avg_potential_V": avg_potential,
+            "net_charge": net_charge,
             "normalization_range": list(self.normalization_range),
             "ce_order": self.ce_order,
+            "used_columns": used_columns,
         }
 
-        # 从 raw_data 继承元数据（排除 others 字段）
-        info_dict = {}
-        
-        if hasattr(raw_data, "info"):
-            # 复制所有标准字段（包括 None 值）
-            for field in ["sample_name", "start_time", "operator", "instrument", 
-                          "active_material_mass", "wave_number"]:
-                value = getattr(raw_data.info, field, None)
-                info_dict[field] = value
-        
-        # 更新 technique 和 parameters（会覆盖 raw_info 中的值）
-        info_dict["technique"] = [self.technique]
-        info_dict["parameters"] = analysis_params
-
-        analysis_info = AnalysisDataInfo(**info_dict)
+        # 构建 AnalysisData 和 AnalysisDataInfo
         analysis_data = AnalysisData(data=result_ds)
+        analysis_info = AnalysisDataInfo(parameters=parameters)
 
         return analysis_data, analysis_info

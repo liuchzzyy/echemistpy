@@ -3,15 +3,12 @@
 from __future__ import annotations
 
 from abc import ABCMeta, abstractmethod
-from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
+from typing import Any, List, Optional, Tuple
 
-import xarray as xr
-from traitlets import HasTraits, Instance, List as TList, MetaHasTraits, Unicode
+from traitlets import HasTraits, Instance, MetaHasTraits, Unicode
+from traitlets import List as TList
 
-from echemistpy.io.structures import RawData, RawDataInfo, ResultsData, ResultsDataInfo
-
-if TYPE_CHECKING:
-    pass
+from echemistpy.io.structures import AnalysisData, AnalysisDataInfo, RawData, RawDataInfo
 
 
 class ABCMetaHasTraits(ABCMeta, MetaHasTraits):
@@ -36,8 +33,8 @@ class TechniqueAnalyzer(HasTraits, metaclass=ABCMetaHasTraits):
         self,
         raw_data: RawData,
         raw_info: Optional[RawDataInfo] = None,
-        **kwargs: Any,
-    ) -> Tuple[ResultsData, ResultsDataInfo]:
+        **kwargs: Any,  # noqa: ARG002
+    ) -> Tuple[AnalysisData, AnalysisDataInfo]:
         """Perform the full analysis workflow.
 
         This includes validation, preprocessing, computation, and packaging.
@@ -46,10 +43,10 @@ class TechniqueAnalyzer(HasTraits, metaclass=ABCMetaHasTraits):
         Args:
             raw_data: Standardized raw data container
             raw_info: Optional metadata from the raw data
-            **kwargs: Additional parameters to store in ResultsDataInfo
+            **kwargs: Additional parameters (currently unused, for future extension)
 
         Returns:
-            Tuple of (ResultsData, ResultsDataInfo)
+            Tuple of (AnalysisData, AnalysisDataInfo)
         """
         # 1. Validate
         self.validate(raw_data)
@@ -57,32 +54,21 @@ class TechniqueAnalyzer(HasTraits, metaclass=ABCMetaHasTraits):
         # 2. Preprocess (on a copy to avoid side effects)
         cleaned = self.preprocess(raw_data.copy())
 
-        # 3. Compute
-        summary, tables = self.compute(cleaned)
+        # 3. Compute (returns AnalysisData + AnalysisDataInfo)
+        analysis_data, analysis_info = self.compute(cleaned)
 
-        # 4. Package results
-        # Start with metadata from raw_info if provided
-        info_dict = raw_info.to_dict() if raw_info else {}
+        # 4. Inherit metadata from raw_info
+        if raw_info:
+            # Copy standard metadata fields
+            for field in ["sample_name", "start_time", "operator", "instrument", "active_material_mass", "wave_number"]:
+                value = getattr(raw_info, field, None)
+                if value is not None:
+                    setattr(analysis_info, field, value)
 
-        # Update with analyzer-specific info
-        info_dict.update({
-            "technique": [self.technique],
-            "parameters": summary,
-        })
-        # Add any extra kwargs
-        info_dict.update(kwargs)
+        # Update technique field
+        analysis_info.technique = [self.technique]
 
-        info = ResultsDataInfo(**info_dict)
-
-        if not tables:
-            data = xr.Dataset()
-        elif len(tables) == 1:
-            data = next(iter(tables.values()))
-        else:
-            # Create a DataTree if multiple tables are returned
-            data = xr.DataTree.from_dict(tables)
-
-        return ResultsData(data=data), info
+        return analysis_data, analysis_info
 
     @property
     @abstractmethod
@@ -104,18 +90,21 @@ class TechniqueAnalyzer(HasTraits, metaclass=ABCMetaHasTraits):
         if missing:
             raise ValueError(f"Analyzer '{self.name}' requires columns {self.required_columns}, but {missing} are missing from the data.")
 
-    def preprocess(self, raw_data: RawData) -> RawData:
+    def preprocess(self, raw_data: RawData) -> RawData:  # noqa: PLR6301
         """Optional preprocessing step (e.g., filtering, normalization)."""
         return raw_data
 
     @abstractmethod
-    def compute(self, raw_data: RawData) -> tuple[Dict[str, Any], Dict[str, xr.Dataset]]:
-        """Perform the main calculation and return summary + tables.
+    def compute(self, raw_data: RawData) -> Tuple[AnalysisData, AnalysisDataInfo]:
+        """Perform the main calculation and return results.
+
+        Args:
+            raw_data: Preprocessed data container
 
         Returns:
-            A tuple containing:
-            - summary: Dictionary of scalar results/parameters
-            - tables: Dictionary mapping names to xarray.Dataset objects
+            Tuple of (AnalysisData, AnalysisDataInfo) containing:
+            - AnalysisData: Processed data as xarray.Dataset or xarray.DataTree
+            - AnalysisDataInfo: Analysis parameters and metadata
         """
 
 
@@ -199,8 +188,8 @@ def create_default_registry() -> TechniqueRegistry:
     Returns:
         TechniqueRegistry with standard analyzers
     """
-    from .echem import CyclicVoltammetryAnalyzer
+    from .echem import GalvanostaticAnalyzer  # noqa: PLC0415
 
     registry = TechniqueRegistry()
-    registry.register(CyclicVoltammetryAnalyzer())
+    registry.register(GalvanostaticAnalyzer())
     return registry
