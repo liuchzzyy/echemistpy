@@ -60,6 +60,9 @@ class MISTRALReader(BaseReader):
                 raise ValueError(f"File {path} does not contain 'SpecNormalized' group.")
 
             group = f["SpecNormalized"]
+            if not isinstance(group, h5py.Group):
+                raise ValueError(f"'SpecNormalized' in {path} is not a valid HDF5 Group.")
+
             ds = self._extract_dataset(group)
 
             # Extract date from filename
@@ -132,8 +135,7 @@ class MISTRALReader(BaseReader):
                 return f"{d[:4]}-{d[4:6]}-{d[6:]}"
         return None
 
-    @staticmethod
-    def _get_file_extension() -> str:
+    def _get_file_extension(self) -> str:
         """Get the file extension for this reader.
 
         Returns:

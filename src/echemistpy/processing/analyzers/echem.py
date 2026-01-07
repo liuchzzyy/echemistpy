@@ -583,7 +583,6 @@ class GalvanostaticAnalyzer(TechniqueAnalyzer):
 
         # 时间数组
         time = ds.coords[time_key].values if time_key in ds.coords else ds[time_key].values
-        potential = ds[pot_key].values if pot_key else np.array([])
         current = ds[cur_key].values
         capacity = ds[cap_key].values if cap_key else None
 
@@ -601,10 +600,6 @@ class GalvanostaticAnalyzer(TechniqueAnalyzer):
         normalized_time = self._normalize_sequence(t_numeric, norm_min, norm_max)
         normalized_capacity = self._normalize_sequence(capacity, norm_min, norm_max) if capacity is not None else None
 
-        # 电位统计信息
-        start_potential = float(potential[0]) if potential.size else float("nan")
-        end_potential = float(potential[-1]) if potential.size else float("nan")
-        avg_potential = float(np.mean(potential)) if potential.size else float("nan")
         net_charge = float(cumulative_charge[-1]) if cumulative_charge.size else 0.0
 
         # 3. 库伦效率计算（如果启用且存在 cycle_number）
@@ -655,9 +650,6 @@ class GalvanostaticAnalyzer(TechniqueAnalyzer):
 
         # 构建 parameters 字典（包含标量结果和参数）
         parameters = {
-            "start_potential_V": start_potential,
-            "end_potential_V": end_potential,
-            "avg_potential_V": avg_potential,
             "net_charge": net_charge,
             "normalization_range": list(self.normalization_range),
             "ce_order": self.ce_order,

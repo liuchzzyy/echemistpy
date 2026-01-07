@@ -226,6 +226,16 @@ class MyAnalyzer(TechniqueAnalyzer):
 3. Register in `IOPluginManager` with `supported_extensions` and `instrument`
 4. Use `# ruff: noqa: N999` for instrument-specific filenames (e.g., `MSPD.py`)
 
+### Recommended Libraries
+
+When implementing specific functionalities, prioritize these libraries:
+
+- **Background Fitting**: Use `pybaselines` (https://github.com/derb12/pybaselines)
+- **Curve Fitting**: Use `lmfit` (https://github.com/lmfit/lmfit-py)
+- **Image Processing/Alignment**: Use `scikit-image` (https://scikit-image.org/)
+- **Dimensionality Reduction**: Use `scikit-learn` (PCA)
+- **Clustering**: Use `scikit-learn` (KMeans, GMM, DBSCAN) or `umap-learn` (UMAP)
+
 ## Key Files
 
 - `src/echemistpy/io/structures.py` - Core data structures (RawData, AnalysisData)

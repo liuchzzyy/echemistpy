@@ -160,10 +160,156 @@ uv sync --all-groups
   - 单个测试: `uv run pytest tests/integration/test_io_with_real_data.py::test_biologic_gpcl`
   - 覆盖率报告: `uv run pytest --cov=echemistpy`
 
+## 代码风格指南
+
+### 导入组织
+
+组织导入为 4 组，各组之间用空行分隔：
+
+```python
+from __future__ import annotations          # 1. Future imports (总是第一个)
+
+import logging                               # 2. 标准库
+from pathlib import Path
+from typing import Any, ClassVar
+
+import numpy as np                           # 3. 第三方包
+import xarray as xr
+from traitlets import HasTraits, Unicode
+
+from echemistpy.io.structures import RawData  # 4. 本地导入
+```
+
+- 使用 `isort` 顺序（由 `ruff` 的 `I` 规则处理）
+- 使用 `from traitlets import List as TList` 避免覆盖内置的 `list`
+
+### 格式化
+
+- **行长度**: 200 字符（在 `pyproject.toml` 中配置）
+- **格式化工具**: ruff format
+- **Pre-commit hooks**: 尾随空格、文件末尾修复、混合行尾
+
+### 类型注解
+
+- 始终为函数参数和返回值添加类型注解
+- 优先使用现代语法: `list[str]`, `dict[str, Any]`, `str | None`
+- 对类级常量使用 `ClassVar`: `INSTRUMENT_NAME: ClassVar[str] = "BioLogic"`
+- 对泛型类型使用 `TypeVar`: `T = TypeVar("T", bound="BaseInfo")`
+
+```python
+def load(path: str | Path, instrument: str | None = None) -> tuple[RawData, RawDataInfo]:
+    ...
+
+class MyReader:
+    SUPPORTED_EXTENSIONS: ClassVar[set[str]] = {".mpt", ".txt"}
+```
+
+### 命名约定
+
+| 类型      | 约定             | 示例                                        |
+| --------- | ---------------- | ------------------------------------------- |
+| 类        | PascalCase       | `BiologicMPTReader`, `TechniqueAnalyzer`    |
+| 函数/方法 | snake_case       | `load_single_file()`, `standardize_names()` |
+| 私有      | 前导下划线       | `_parse_metadata()`, `_internal_helper()`   |
+| 常量      | UPPER_SNAKE_CASE | `BOOL_COLUMNS`, `ECHEM_PREFERRED_ORDER`     |
+| 模块      | 小写             | `structures.py`, `loaders.py`               |
+
+按角色分类的类后缀：
+
+- `*Reader` - I/O 插件
+- `*Analyzer` - 处理分析器
+- `*Data` / `*Info` - 数据容器
+- `*Mixin` - 共享功能
+
+### Docstrings
+
+使用 Google 风格的 docstrings。公共 API 使用英文；内部代码可使用中文。
+
+```python
+def compute(self, raw_data: RawData) -> tuple[AnalysisData, AnalysisDataInfo]:
+    """Compute analysis results from raw data.
+
+    Args:
+        raw_data: Input measurement data with required columns.
+
+    Returns:
+        Tuple of (AnalysisData, AnalysisDataInfo) containing results.
+
+    Raises:
+        ValueError: If required columns are missing.
+    """
+```
+
+### 错误处理
+
+- 先捕获特定异常，最后捕获通用 `Exception`
+- 在错误消息中包含上下文: `raise ValueError(f"No loader for '{ext}'")`
+- 对非关键错误使用日志: `logger.warning("...", exc_info=True)`
+- 对弃用或非致命问题使用 `warnings.warn(..., stacklevel=2)`
+
+```python
+try:
+    result = process_file(path)
+except FileNotFoundError:
+    raise ValueError(f"Data file not found: {path}") from None
+except (OSError, TypeError) as e:
+    logger.warning("Processing failed for %s: %s", path, e)
+```
+
+### Ruff Linting 规则
+
+启用的规则集（见 `pyproject.toml`）：
+
+- `F` - Pyflakes
+- `E`, `W` - PEP 8
+- `B` - flake8-bugbear
+- `N` - pep8-naming
+- `PL` - pylint
+- `S` - security (bandit)
+- `I` - isort
+- `SIM`, `C4`, `ARG`, `ERA`, `RUF`, `G`
+
+忽略的规则：
+
+- `E501` - 行太长（由格式化工具处理）
+- `PLR2004` - 魔术值
+- `RUF001`, `RUF002`, `RUF003` - 允许中文标点
+
+测试文件忽略: `S101` (assert), `ARG` (未使用的参数)
+
+对于合理的例外情况使用 `# noqa: RULE`，并添加注释说明原因。
+
+### 代码质量工作流
+
+在提交代码前，必须依次运行以下检查：
+
+```powershell
+# 1. 格式化代码
+uv run ruff format src/
+
+# 2. 检查并自动修复 lint 问题
+uv run ruff check src/ --fix
+
+# 3. 类型检查（严格模式）
+uv run ty check
+```
+
+**重要说明**：
+
+- `ruff format` - 自动格式化代码风格（缩进、空格、换行等）
+- `ruff check` - 检查代码质量问题（未使用变量、导入顺序、安全问题等）
+- `ty check` - 静态类型检查，确保类型注解正确
+
+如果 `ty check` 报告类型错误，需要修复后再提交。常见的类型错误包括：
+
+- 缺少类型注解
+- 类型不匹配（如 `str | None` 传给期望 `str` 的参数）
+- 使用了已废弃的类型语法（如 `Optional[str]` 应改为 `str | None`）
+
 ### Git 提交规范
 
 - **语言**: 所有 Git commit 消息必须使用 **中文**
-- **格式**: 遵循约定式提交 (Conventional Commits) 规范，使用前缀如 `[FEATURE]`、`[FIX]`、`[DOCS]` 等
+- **格式**: 遵循约定式提交 (Conventional Commits) 规范，使用前缀如 `[FEATURE]`、`[FIX]`、`[DOCS]`、`[REFACTOR]`、`[TEST]`、`[CHORE]` 等
 - **示例**: `[FEATURE] 添加库伦效率计算功能`
 
 ## 扩展点和集成
@@ -187,6 +333,16 @@ uv sync --all-groups
 2. 实现读取逻辑，返回 `RawData` 和 `RawDataInfo`。
 3. 在 `src/echemistpy/io/plugin_manager.py` 中注册插件，指定 `supported_extensions` 和 `instrument`。
 4. **命名约定**: 遵循 PEP 8，但特定仪器类文件（如 `MSPD.py`）可保持原样并添加 `# ruff: noqa: N999`。
+
+### 推荐库
+
+实现特定功能时，优先使用以下库：
+
+- **背景拟合**: 使用 `pybaselines` (https://github.com/derb12/pybaselines)
+- **曲线拟合**: 使用 `lmfit` (https://github.com/lmfit/lmfit-py)
+- **图像处理/对齐**: 使用 `scikit-image` (https://scikit-image.org/)
+- **降维**: 使用 `scikit-learn` (PCA)
+- **聚类**: 使用 `scikit-learn` (KMeans, GMM, DBSCAN) 或 `umap-learn` (UMAP)
 
 ### 数据标准化约定
 
