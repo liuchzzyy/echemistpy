@@ -15,6 +15,8 @@
   <a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/python-3.10%20|%203.11%20|%203.12-blue" alt="Python Version"></a>
   <a href="https://github.com/liuchzzyy/echemistpy"><img src="https://img.shields.io/badge/GitHub-echemistpy-black?logo=github" alt="GitHub"></a>
   <a href="https://github.com/liuchzzyy/echemistpy/issues"><img src="https://img.shields.io/github/issues/liuchzzyy/echemistpy" alt="Issues"></a>
+  <br>
+  <a href="https://colab.research.google.com/github/liuchzzyy/echemistpy/blob/cl_version/notebooks/test_stxm_analyzer.ipynb"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"></a>
 </p>
 
 ---
