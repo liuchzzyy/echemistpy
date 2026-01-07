@@ -118,11 +118,14 @@ class GalvanostaticAnalyzer(TechniqueAnalyzer):
     def required_columns(self) -> tuple[str, ...]:
         """返回必需的数据列.
 
-        对于恒流分析器，动态查找可用的时间、电位和电流列。
+        恒流分析器需要时间、电位和电流列，但列名可能不同（如 time_s/systime）。
+        返回每类列的首选名称，实际验证在 validate/preprocess 中动态进行。
+
+        Returns:
+            首选列名元组（用于文档目的，实际验证在 preprocess 中进行）
         """
-        # 恒流分析器的必需列（至少需要一个时间列、一个电位列、一个电流列）
-        # 但由于列名可能不同，实际验证在 validate 中进行
-        return ()
+        # 返回首选列名作为文档参考
+        return ("time_s", "ewe_v", "current_ma")
 
     @staticmethod
     def _get_numeric_time(time_array: np.ndarray) -> np.ndarray:
@@ -263,7 +266,45 @@ class GalvanostaticAnalyzer(TechniqueAnalyzer):
 
         return cycles
 
-    def _calculate_ce(self, ds: xr.Dataset) -> pd.DataFrame:  # noqa: PLR0912, PLR0914, PLR0915
+    def _compute_coulombic_efficiency(
+        self,
+        charge_capacity: float,
+        discharge_capacity: float,
+        cycle_num: int,
+    ) -> float:
+        """根据充放电容量计算库伦效率.
+
+        根据 ce_order 参数决定计算方式：
+        - ce_order='discharge': CE = 放电容量 / 充电容量 * 100%
+        - ce_order='charge': CE = 充电容量 / 放电容量 * 100%
+
+        Args:
+            charge_capacity: 充电容量 (mAh)
+            discharge_capacity: 放电容量 (mAh)
+            cycle_num: 循环编号（用于警告信息）
+
+        Returns:
+            库伦效率百分比，如果分母低于阈值则返回 NaN
+        """
+        if self.ce_order == "discharge":
+            numerator = discharge_capacity
+            denominator = charge_capacity
+            threshold_name = "充电容量"
+        else:  # charge
+            numerator = charge_capacity
+            denominator = discharge_capacity
+            threshold_name = "放电容量"
+
+        if denominator > self.ce_min_charge_threshold:
+            return (numerator / denominator) * 100
+        else:
+            warnings.warn(
+                f"循环 {cycle_num} 的{threshold_name} ({denominator:.6f} mAh) 低于阈值 ({self.ce_min_charge_threshold} mAh), 库伦效率设为 NaN",
+                stacklevel=3,
+            )
+            return float("nan")
+
+    def _calculate_ce(self, ds: xr.Dataset) -> pd.DataFrame:  # noqa: PLR0912, PLR0914
         """计算每个循环的库伦效率.
 
         根据电流方向判断充电和放电过程，根据 ce_order 参数计算库伦效率：
@@ -324,26 +365,8 @@ class GalvanostaticAnalyzer(TechniqueAnalyzer):
                 else:
                     discharge_capacity_cal = 0.0
 
-                # 库伦效率: 根据 ce_order 选择计算方式
-                if self.ce_order == "discharge":
-                    # CE = 放电 / 充电
-                    denominator = charge_capacity_cal
-                    numerator = discharge_capacity_cal
-                    threshold_name = "充电容量"
-                else:  # charge
-                    # CE = 充电 / 放电
-                    denominator = discharge_capacity_cal
-                    numerator = charge_capacity_cal
-                    threshold_name = "放电容量"
-
-                if denominator > self.ce_min_charge_threshold:
-                    coulombic_eff = (numerator / denominator) * 100
-                else:
-                    coulombic_eff = float("nan")
-                    warnings.warn(
-                        f"循环 {cycle_num} 的{threshold_name} ({denominator:.6f} mAh) 低于阈值 ({self.ce_min_charge_threshold} mAh), 库伦效率设为 NaN",
-                        stacklevel=2,
-                    )
+                # 使用提取的方法计算库伦效率
+                coulombic_eff = self._compute_coulombic_efficiency(charge_capacity_cal, discharge_capacity_cal, cycle_num)
 
                 results.append({
                     "cycle_number": cycle_num,
@@ -378,26 +401,8 @@ class GalvanostaticAnalyzer(TechniqueAnalyzer):
                 charge_capacity_cal = float(np.sum(charge[charge > 0]))  # 充电容量
                 discharge_capacity_cal = float(np.abs(np.sum(charge[charge < 0])))  # 放电容量
 
-                # 库伦效率: 根据 ce_order 选择计算方式
-                if self.ce_order == "discharge":
-                    # CE = 放电 / 充电
-                    denominator = charge_capacity_cal
-                    numerator = discharge_capacity_cal
-                    threshold_name = "充电容量"
-                else:  # charge
-                    # CE = 充电 / 放电
-                    denominator = discharge_capacity_cal
-                    numerator = charge_capacity_cal
-                    threshold_name = "放电容量"
-
-                if denominator > self.ce_min_charge_threshold:
-                    coulombic_eff = (numerator / denominator) * 100
-                else:
-                    coulombic_eff = float("nan")
-                    warnings.warn(
-                        f"循环 {cycle_num} 的{threshold_name} ({denominator:.6f} mAh) 低于阈值 ({self.ce_min_charge_threshold} mAh), 库伦效率设为 NaN",
-                        stacklevel=2,
-                    )
+                # 使用提取的方法计算库伦效率
+                coulombic_eff = self._compute_coulombic_efficiency(charge_capacity_cal, discharge_capacity_cal, cycle_num)
 
                 results.append({
                     "cycle_number": cycle_num,
@@ -610,9 +615,12 @@ class GalvanostaticAnalyzer(TechniqueAnalyzer):
             try:
                 ce_df = self._calculate_ce(ds)
                 ce_results = ce_df.to_dict("records")
-            except Exception as e:
+            except (ValueError, KeyError) as e:
                 # CE 计算失败不应该影响其他分析
-                print(f"警告: 库伦效率计算失败: {e}")
+                warnings.warn(
+                    f"库伦效率计算失败: {e}",
+                    stacklevel=2,
+                )
                 ce_results = None
 
         # 4. 构建结果数据集

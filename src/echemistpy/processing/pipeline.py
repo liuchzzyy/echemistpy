@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any, Optional, Tuple
+from typing import Any
 
 from echemistpy.io import load
 from echemistpy.io.structures import AnalysisData, AnalysisDataInfo
@@ -21,7 +21,7 @@ class AnalysisPipeline:
     files from raw format to analyzed results.
     """
 
-    def __init__(self, registry: Optional[TechniqueRegistry] = None) -> None:
+    def __init__(self, registry: TechniqueRegistry | None = None) -> None:
         """Initialize the pipeline with an analyzer registry.
 
         Args:
@@ -32,10 +32,10 @@ class AnalysisPipeline:
     def run(
         self,
         path: str | Path,
-        technique: Optional[str] = None,
-        instrument: Optional[str] = None,
+        technique: str | None = None,
+        instrument: str | None = None,
         **kwargs: Any,
-    ) -> Tuple[AnalysisData, AnalysisDataInfo]:
+    ) -> tuple[AnalysisData, AnalysisDataInfo]:
         """Run the full pipeline for a single file.
 
         Args:
@@ -103,10 +103,10 @@ class AnalysisPipeline:
 
 def run_analysis(
     path: str | Path,
-    technique: Optional[str] = None,
-    instrument: Optional[str] = None,
+    technique: str | None = None,
+    instrument: str | None = None,
     **kwargs: Any,
-) -> Tuple[AnalysisData, AnalysisDataInfo]:
+) -> tuple[AnalysisData, AnalysisDataInfo]:
     """Convenience function to run analysis on a file using default settings.
 
     Args:

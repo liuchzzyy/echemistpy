@@ -72,6 +72,32 @@ from echemistpy.io.structures import RawData  # 4. Local imports
 - **Formatter**: ruff format
 - **Pre-commit hooks**: trailing whitespace, end-of-file fixer, mixed line endings
 
+### Code Quality Workflow
+
+在提交代码前，必须依次运行以下检查：
+
+```powershell
+# 1. 格式化代码
+uv run ruff format src/
+
+# 2. 检查并自动修复 lint 问题
+uv run ruff check src/ --fix
+
+# 3. 类型检查（严格模式）
+uv run ty check
+```
+
+**重要说明**：
+
+- `ruff format` - 自动格式化代码风格（缩进、空格、换行等）
+- `ruff check` - 检查代码质量问题（未使用变量、导入顺序、安全问题等）
+- `ty check` - 静态类型检查，确保类型注解正确
+
+如果 `ty check` 报告类型错误，需要修复后再提交。常见的类型错误包括：
+- 缺少类型注解
+- 类型不匹配（如 `str | None` 传给期望 `str` 的参数）
+- 使用了已废弃的类型语法（如 `Optional[str]` 应改为 `str | None`）
+
 ### Type Annotations
 
 - Always use type annotations for function parameters and return values

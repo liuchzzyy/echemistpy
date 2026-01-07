@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from abc import ABCMeta, abstractmethod
-from typing import Any, List, Optional, Tuple
+from typing import Any, ClassVar
 
 from traitlets import HasTraits, Instance, MetaHasTraits, Unicode
 from traitlets import List as TList
@@ -20,6 +20,16 @@ class ABCMetaHasTraits(ABCMeta, MetaHasTraits):
 class TechniqueAnalyzer(HasTraits, metaclass=ABCMetaHasTraits):
     """Template used by all built-in analyzers."""
 
+    # 可从 RawDataInfo 继承到 AnalysisDataInfo 的元数据字段
+    INHERITABLE_METADATA_FIELDS: ClassVar[tuple[str, ...]] = (
+        "sample_name",
+        "start_time",
+        "operator",
+        "instrument",
+        "active_material_mass",
+        "wave_number",
+    )
+
     technique = Unicode(help="Technique identifier")
     instrument = Unicode(None, allow_none=True, help="Instrument identifier")
     name = Unicode(help="Analyzer name")
@@ -32,9 +42,9 @@ class TechniqueAnalyzer(HasTraits, metaclass=ABCMetaHasTraits):
     def analyze(
         self,
         raw_data: RawData,
-        raw_info: Optional[RawDataInfo] = None,
+        raw_info: RawDataInfo | None = None,
         **kwargs: Any,  # noqa: ARG002
-    ) -> Tuple[AnalysisData, AnalysisDataInfo]:
+    ) -> tuple[AnalysisData, AnalysisDataInfo]:
         """Perform the full analysis workflow.
 
         This includes validation, preprocessing, computation, and packaging.
@@ -60,7 +70,7 @@ class TechniqueAnalyzer(HasTraits, metaclass=ABCMetaHasTraits):
         # 4. Inherit metadata from raw_info
         if raw_info:
             # Copy standard metadata fields
-            for field in ["sample_name", "start_time", "operator", "instrument", "active_material_mass", "wave_number"]:
+            for field in self.INHERITABLE_METADATA_FIELDS:
                 value = getattr(raw_info, field, None)
                 if value is not None:
                     setattr(analysis_info, field, value)
@@ -95,7 +105,7 @@ class TechniqueAnalyzer(HasTraits, metaclass=ABCMetaHasTraits):
         return raw_data
 
     @abstractmethod
-    def compute(self, raw_data: RawData) -> Tuple[AnalysisData, AnalysisDataInfo]:
+    def compute(self, raw_data: RawData) -> tuple[AnalysisData, AnalysisDataInfo]:
         """Perform the main calculation and return results.
 
         Args:
@@ -131,7 +141,7 @@ class TechniqueRegistry(HasTraits):
         if analyzer in self._analyzers:
             self._analyzers.remove(analyzer)
 
-    def get_analyzer(self, technique: str, instrument: Optional[str] = None) -> TechniqueAnalyzer:
+    def get_analyzer(self, technique: str, instrument: str | None = None) -> TechniqueAnalyzer:
         """Get analyzer for a technique and optionally an instrument.
 
         Args:
@@ -165,7 +175,7 @@ class TechniqueRegistry(HasTraits):
 
         raise KeyError(f"No analyzer registered for technique '{technique}'" + (f" and instrument '{instrument}'" if instrument else ""))
 
-    def available(self) -> List[str]:
+    def available(self) -> list[str]:
         """Get list of registered techniques.
 
         Returns:
