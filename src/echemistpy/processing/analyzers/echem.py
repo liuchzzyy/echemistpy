@@ -23,10 +23,10 @@ class GalvanostaticAnalyzer(TechniqueAnalyzer):
     and a normalized potential for visualization.
     """
 
-    technique = Unicode("echem", help="Technique identifier")
+    technique = Unicode("galvanostatic", help="Technique identifier")
     supported_techniques = TList(
         Unicode(),
-        default_value=["echem", "gpcl", "gcd"],
+        default_value=["galvanostatic", "echem", "gpcl", "gcd"],
         help="List of supported technique identifiers",
     )
 
@@ -81,6 +81,22 @@ class GalvanostaticAnalyzer(TechniqueAnalyzer):
         default_value=[0.0, 1.0],
         help="Normalization range for time/capacity sequences [min, max]",
     )
+
+    # 归一化方式参数
+    # None 或不指定: 全局归一化所有数据（默认）
+    # list[int]: 仅将指定的循环圈数合并归一化（例如 [1, 2, 3]）
+    normalize_per_cycle: list[int] | None = None
+
+    def __init__(self, **kwargs):
+        """Initialize GalvanostaticAnalyzer.
+
+        Args:
+            normalize_per_cycle: Normalization mode:
+                - None: Global normalization across all data (default)
+                - list[int]: Normalize only specified cycle numbers together (e.g., [1, 2, 3])
+            **kwargs: Other parameters for TechniqueAnalyzer
+        """
+        super().__init__(**kwargs)
 
     @staticmethod
     def _pick(ds: xr.Dataset, candidates: list[str]) -> str | None:
@@ -159,35 +175,15 @@ class GalvanostaticAnalyzer(TechniqueAnalyzer):
         else:
             return np.asarray(time_array, dtype=float)
 
-    def validate(self, raw_data: RawData) -> None:  # noqa: PLR6301
+    def validate(self, raw_data: RawData) -> None:
         """验证数据是否适合此分析器.
 
-        要求:
-        1. 数据的 technique 必须包含 "echem"
-        2. 其他技术标识符 (如有) 应在 ["gpcl", "gcd"] 中
+        基本验证由基类的 validate() 方法处理（检查 required_columns）。
+        这里可以添加额外的电化学数据特定验证。
         """
-        if not hasattr(raw_data, "info") or not hasattr(raw_data.info, "technique"):
-            return  # 没有技术信息时跳过验证
-
-        data_techniques = raw_data.info.technique
-
-        # 统一转换为列表处理
-        if not isinstance(data_techniques, list):
-            data_techniques = [data_techniques] if data_techniques else []
-
-        # 必须包含 "echem"
-        if "echem" not in data_techniques:
-            raise ValueError(f"GalvanostaticAnalyzer 要求数据技术必须包含 'echem', 但得到: {data_techniques}")
-
-        # 其他技术标识符必须在允许列表中
-        allowed_others = {"gpcl", "gcd"}  # 使用集合提高查找效率
-        invalid_techniques = []
-        for t in data_techniques:
-            if t != "echem" and t not in allowed_others:
-                invalid_techniques.append(t)
-
-        if invalid_techniques:
-            raise ValueError(f"数据包含不支持的技术标识符: {invalid_techniques}. 除 'echem' 外, 仅支持: {list(allowed_others)}")
+        # technique 验证由基类在 analyze() 中使用 raw_info 处理
+        # 这里只需要验证数据本身的完整性
+        pass
 
     def preprocess(self, raw_data: RawData) -> RawData:
         """按时间排序并添加数值型时间坐标.
@@ -476,6 +472,55 @@ class GalvanostaticAnalyzer(TechniqueAnalyzer):
             return arr
 
         # 构建二维数据变量
+        # 时间归一化函数：根据 normalize_per_cycle 决定归一化方式
+        if self.normalize_per_cycle is not None and isinstance(self.normalize_per_cycle, list):
+            # 指定循环列表：仅将这些循环的数据合并归一化，其他循环设为 np.nan
+            specified_cycles = set(self.normalize_per_cycle)
+            # 获取指定循环的时间范围
+            specified_time_vals = []
+            for cycle_num in specified_cycles:
+                if cycle_num in cycles_dict:
+                    cycle_ds = cycles_dict[cycle_num]
+                    specified_time_vals.extend(self._get_numeric_time(cycle_ds[time_key].values))
+
+            if specified_time_vals:
+                specified_time = np.array(specified_time_vals)
+                t_min, t_max = specified_time.min(), specified_time.max()
+            else:
+                # 如果指定的循环不存在，使用全局范围
+                global_time = self._get_numeric_time(ds[time_key].values)
+                t_min, t_max = global_time.min(), global_time.max()
+
+            def norm_time_func(c, cycle_num):
+                time_vals = self._get_numeric_time(c[time_key].values)
+                # 只为指定的循环计算归一化值，其他返回 NaN
+                if cycle_num in specified_cycles:
+                    if t_max > t_min:
+                        return norm_min + (time_vals - t_min) / (t_max - t_min) * (norm_max - norm_min)
+                    else:
+                        return np.full_like(time_vals, norm_min)
+                else:
+                    return np.full_like(time_vals, np.nan)
+
+        else:
+            # 默认：全局归一化所有数据
+            global_time = self._get_numeric_time(ds[time_key].values)
+            t_min, t_max = global_time.min(), global_time.max()
+            norm_time_func = lambda c, cycle_num: (
+                norm_min + (self._get_numeric_time(c[time_key].values) - t_min) / (t_max - t_min) * (norm_max - norm_min)
+                if t_max > t_min
+                else np.full_like(self._get_numeric_time(c[time_key].values), norm_min)
+            )
+
+        def create_2d_array_with_cycle(data_getter):
+            """创建二维数组，从每个 cycle 获取数据，支持 cycle_num 参数."""
+            arr = np.full((len(cycle_numbers), max_records), np.nan)
+            for i, cycle_num in enumerate(cycle_numbers):
+                cycle_ds = cycles_dict[cycle_num]
+                data = data_getter(cycle_ds, cycle_num)
+                arr[i, : len(data)] = data
+            return arr
+
         result_vars = {
             "time_s": (
                 ["cycle_number", "record"],
@@ -483,13 +528,7 @@ class GalvanostaticAnalyzer(TechniqueAnalyzer):
             ),
             "normalized_time": (
                 ["cycle_number", "record"],
-                create_2d_array(
-                    lambda c: self._normalize_sequence(
-                        self._get_numeric_time(c[time_key].values),
-                        norm_min,
-                        norm_max,
-                    )
-                ),
+                create_2d_array_with_cycle(norm_time_func),
             ),
         }
 
@@ -504,15 +543,54 @@ class GalvanostaticAnalyzer(TechniqueAnalyzer):
                 create_2d_array(lambda c: c[cap_key].values if cap_key else np.array([])),
             )
             if normalized_capacity is not None:
-                # 对每个 cycle 单独归一化
-                def norm_cap_2d(c):
-                    if cap_key and cap_key in c:
-                        cap_vals = c[cap_key].values
-                        if len(cap_vals) > 0:
-                            return self._normalize_sequence(cap_vals, norm_min, norm_max)
-                    return np.array([])
+                # 容量归一化函数：根据 normalize_per_cycle 决定归一化方式
+                if self.normalize_per_cycle is not None and isinstance(self.normalize_per_cycle, list):
+                    # 指定循环列表：仅将这些循环的数据合并归一化，其他循环设为 np.nan
+                    specified_cycles = set(self.normalize_per_cycle)
+                    # 获取指定循环的容量范围
+                    specified_cap_vals = []
+                    for cycle_num in specified_cycles:
+                        if cycle_num in cycles_dict and cap_key:
+                            cycle_ds = cycles_dict[cycle_num]
+                            if cap_key in cycle_ds:
+                                specified_cap_vals.extend(cycle_ds[cap_key].values)
 
-                result_vars["normalized_capacity"] = (["cycle_number", "record"], create_2d_array(norm_cap_2d))
+                    if specified_cap_vals:
+                        specified_cap = np.array(specified_cap_vals)
+                        cap_min, cap_max = specified_cap.min(), specified_cap.max()
+                    else:
+                        # 如果指定的循环不存在，使用全局范围
+                        cap_min, cap_max = capacity.min(), capacity.max()
+
+                    def norm_cap_2d(c, cycle_num):
+                        if cap_key and cap_key in c:
+                            cap_vals = c[cap_key].values
+                            if len(cap_vals) > 0:
+                                # 只为指定的循环计算归一化值，其他返回 NaN
+                                if cycle_num in specified_cycles:
+                                    if cap_max > cap_min:
+                                        return norm_min + (cap_vals - cap_min) / (cap_max - cap_min) * (norm_max - norm_min)
+                                    else:
+                                        return np.full_like(cap_vals, norm_min)
+                                else:
+                                    return np.full_like(cap_vals, np.nan)
+                        return np.array([])
+
+                else:
+                    # 默认：全局归一化所有容量数据
+                    cap_min, cap_max = capacity.min(), capacity.max()
+
+                    def norm_cap_2d(c, cycle_num):
+                        if cap_key and cap_key in c:
+                            cap_vals = c[cap_key].values
+                            if len(cap_vals) > 0:
+                                if cap_max > cap_min:
+                                    return norm_min + (cap_vals - cap_min) / (cap_max - cap_min) * (norm_max - norm_min)
+                                else:
+                                    return np.full_like(cap_vals, norm_min)
+                        return np.array([])
+
+                result_vars["normalized_capacity"] = (["cycle_number", "record"], create_2d_array_with_cycle(norm_cap_2d))
 
         # 创建坐标
         coords = {"cycle_number": cycle_numbers, "record": np.arange(max_records)}
@@ -545,13 +623,16 @@ class GalvanostaticAnalyzer(TechniqueAnalyzer):
 
         return result_ds
 
-    def compute(self, raw_data: RawData) -> tuple[AnalysisData, AnalysisDataInfo]:  # noqa: PLR0914
-        """计算累计电荷(容量)、电位统计和库伦效率.
+    def _compute(self, raw_data: RawData) -> tuple[AnalysisData, AnalysisDataInfo]:  # noqa: PLR0914
+        """计算累计电荷(容量)、电位统计和库伦效率 (内部方法).
 
         此函数：
         1. 提取和验证数据：查找时间、电位、电流、容量列
         2. 归一化处理：对时间/容量序列进行归一化，范围可配置
         3. 库伦效率计算：如果启用且存在 cycle_number
+
+        Note:
+            这是内部方法，用户应调用 analyze() 而不是直接调用此方法。
 
         Args:
             raw_data: 原始数据容器
@@ -599,8 +680,6 @@ class GalvanostaticAnalyzer(TechniqueAnalyzer):
         norm_min, norm_max = self.normalization_range[0], self.normalization_range[1]
         normalized_time = self._normalize_sequence(t_numeric, norm_min, norm_max)
         normalized_capacity = self._normalize_sequence(capacity, norm_min, norm_max) if capacity is not None else None
-
-        net_charge = float(cumulative_charge[-1]) if cumulative_charge.size else 0.0
 
         # 3. 库伦效率计算（如果启用且存在 cycle_number）
         ce_results = None
@@ -650,14 +729,24 @@ class GalvanostaticAnalyzer(TechniqueAnalyzer):
 
         # 构建 parameters 字典（包含标量结果和参数）
         parameters = {
-            "net_charge": net_charge,
             "normalization_range": list(self.normalization_range),
+            "normalize_per_cycle": self.normalize_per_cycle,
             "ce_order": self.ce_order,
             "used_columns": used_columns,
         }
 
         # 构建 AnalysisData 和 AnalysisDataInfo
         analysis_data = AnalysisData(data=result_ds)
+
+        # 创建 AnalysisDataInfo，只包含 parameters
+        # 以下字段会由基类的 analyze() 方法从 RawDataInfo 自动继承:
+        # - technique: 技术标识（从原始数据继承，如 ["echem", "gpcl"]）
+        # - sample_name: 样品名称
+        # - start_time: 测量起始时间
+        # - operator: 操作人员
+        # - instrument: 仪器标识
+        # - active_material_mass: 活性物质质量
+        # - wave_number: 波数（光谱相关）
         analysis_info = AnalysisDataInfo(parameters=parameters)
 
         return analysis_data, analysis_info

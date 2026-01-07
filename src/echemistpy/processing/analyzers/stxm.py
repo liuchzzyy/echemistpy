@@ -10,9 +10,8 @@ import numpy as np
 import scipy.linalg
 import scipy.ndimage
 import scipy.optimize
-import xarray as xr
 import umap
-from scipy.cluster import vq
+import xarray as xr
 from skimage.registration import phase_cross_correlation
 from sklearn.cluster import DBSCAN, KMeans, MiniBatchKMeans
 from sklearn.decomposition import PCA
@@ -71,7 +70,7 @@ def build_lmfit_model(config: dict) -> tuple[lmfit.Model, lmfit.Parameters]:
         elif ctype == "arctan" or ctype == "step":
             model = lmfit.models.StepModel(prefix=prefix, form="arctan")
         else:
-            logger.warning(f"Unknown component type: {ctype}, skipping")
+            logger.warning("Unknown component type: %s, skipping", ctype)
             continue
 
         # Initialize Parameters
@@ -308,8 +307,12 @@ class STXMAnalyzer(TechniqueAnalyzer):
 
         return RawData(data=cleaned_ds)
 
-    def compute(self, raw_data: RawData) -> tuple[AnalysisData, AnalysisDataInfo]:
-        """Execute the STXM analysis workflow."""
+    def _compute(self, raw_data: RawData) -> tuple[AnalysisData, AnalysisDataInfo]:
+        """Execute the STXM analysis workflow (internal method).
+
+        Note:
+            This is an internal method. Users should call analyze() instead.
+        """
         ds = raw_data.data.copy(deep=True)
         results = {}
         params_dict = {}
@@ -500,7 +503,7 @@ class STXMAnalyzer(TechniqueAnalyzer):
                 roi_map = work_da.sel(energy=slice(s, e)).mean(dim="energy")
                 ds[name] = roi_map
             else:
-                logger.warning(f"ROI {name} ({s}-{e}) empty or out of range.")
+                logger.warning("ROI %s (%s-%s) empty or out of range.", name, s, e)
 
         # Spatial ROIs (Extract spectra from regions)
         if self.spatial_rois:
@@ -517,7 +520,7 @@ class STXMAnalyzer(TechniqueAnalyzer):
                         roi_spec = work_da.sel(x=slice(x1, x2), y=slice(y1, y2)).mean(dim=["x", "y"])
                         ds[f"spectrum_{name}"] = roi_spec
                     except Exception as e:
-                        logger.warning(f"Spatial ROI {name} processing failed: {e}")
+                        logger.warning("Spatial ROI %s processing failed: %s", name, e)
 
         # Clustering
         # Use denoised or corrected data (here we use thickness_corrected)
@@ -616,7 +619,7 @@ class STXMAnalyzer(TechniqueAnalyzer):
                     centroids = np.array(centroids)
 
                 else:
-                    logger.warning(f"Unknown clustering method {method}, falling back to KMeans")
+                    logger.warning("Unknown clustering method %s, falling back to KMeans", method)
                     model = KMeans(n_clusters=self.n_clusters)
                     labels_valid = model.fit_predict(data_for_clustering)
                     centroids = model.cluster_centers_
@@ -650,7 +653,7 @@ class STXMAnalyzer(TechniqueAnalyzer):
                 try:
                     composite, params = build_lmfit_model(config)
                 except ValueError as e:
-                    logger.warning(f"Skipping model {model_name}: {e}")
+                    logger.warning("Skipping model %s: %s", model_name, e)
                     continue
 
                 if composite is None:
@@ -724,7 +727,7 @@ class STXMAnalyzer(TechniqueAnalyzer):
                         ds[f"fit_{model_name}_{spec_name}"] = da_fit
 
                     except Exception as e:
-                        logger.warning(f"Fitting {model_name} to {spec_name} failed: {e}")
+                        logger.warning("Fitting %s to %s failed: %s", model_name, spec_name, e)
 
                 fit_results[model_name] = model_fits
 

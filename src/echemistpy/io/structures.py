@@ -45,23 +45,24 @@ class MetadataInfoMixin:
         if self.has_trait(key):
             return getattr(self, key)
 
-        # 按优先级检查动态存储位置
+        # 检查动态存储位置（parameters 或 others，如果存在）
         for container_name in ["parameters", "others"]:
-            container = getattr(self, container_name, None)
-            if isinstance(container, dict) and key in container:
-                return container[key]
+            if hasattr(self, container_name):
+                container = getattr(self, container_name, None)
+                if isinstance(container, dict) and key in container:
+                    return container[key]
 
         return default
 
     def update(self, other: dict[str, Any]) -> None:
         """用新的键值对更新元数据。
 
-        如果存在标准字段则更新，否则更新相应的动态存储（parameters 或 others）。
+        如果存在标准字段则更新，否则更新相应的动态存储（parameters 或 others，如果存在）。
 
         Args:
             other: 要添加/更新的元数据字典
         """
-        # 确定动态容器
+        # 确定动态容器（优先使用 parameters）
         container = None
         if hasattr(self, "parameters"):
             container = self.parameters
@@ -316,11 +317,13 @@ class AnalysisDataInfo(BaseInfo):
 
     Attributes:
         parameters: 分析参数字典，记录所有分析过程使用的配置
-        others: 额外的元数据
+
+    Note:
+        与 RawDataInfo 不同，AnalysisDataInfo 不包含 'others' 字段。
+        所有分析相关的信息都应存储在 parameters 中。
     """
 
     parameters = Dict(help="Dictionary of analysis parameters and configuration")
-    others = Dict(help="Additional metadata not covered by standard fields")
 
 
 class AnalysisData(BaseData):

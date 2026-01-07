@@ -22,6 +22,7 @@ class TechniqueAnalyzer(HasTraits, metaclass=ABCMetaHasTraits):
 
     # 可从 RawDataInfo 继承到 AnalysisDataInfo 的元数据字段
     INHERITABLE_METADATA_FIELDS: ClassVar[tuple[str, ...]] = (
+        "technique",
         "sample_name",
         "start_time",
         "operator",
@@ -42,7 +43,7 @@ class TechniqueAnalyzer(HasTraits, metaclass=ABCMetaHasTraits):
     def analyze(
         self,
         raw_data: RawData,
-        raw_info: RawDataInfo | None = None,
+        raw_info: RawDataInfo,
         **kwargs: Any,  # noqa: ARG002
     ) -> tuple[AnalysisData, AnalysisDataInfo]:
         """Perform the full analysis workflow.
@@ -52,7 +53,7 @@ class TechniqueAnalyzer(HasTraits, metaclass=ABCMetaHasTraits):
 
         Args:
             raw_data: Standardized raw data container
-            raw_info: Optional metadata from the raw data
+            raw_info: Metadata from the raw data (required for metadata inheritance)
             **kwargs: Additional parameters (currently unused, for future extension)
 
         Returns:
@@ -65,18 +66,15 @@ class TechniqueAnalyzer(HasTraits, metaclass=ABCMetaHasTraits):
         cleaned = self.preprocess(raw_data.copy())
 
         # 3. Compute (returns AnalysisData + AnalysisDataInfo)
-        analysis_data, analysis_info = self.compute(cleaned)
+        analysis_data, analysis_info = self._compute(cleaned)
 
         # 4. Inherit metadata from raw_info
-        if raw_info:
-            # Copy standard metadata fields
-            for field in self.INHERITABLE_METADATA_FIELDS:
-                value = getattr(raw_info, field, None)
-                if value is not None:
-                    setattr(analysis_info, field, value)
-
-        # Update technique field
-        analysis_info.technique = [self.technique]
+        # Copy standard metadata fields (explicitly exclude 'others' field)
+        # technique is also inherited from raw_info to preserve original data source information
+        for field in self.INHERITABLE_METADATA_FIELDS:
+            value = getattr(raw_info, field, None)
+            if value is not None:
+                setattr(analysis_info, field, value)
 
         return analysis_data, analysis_info
 
@@ -105,8 +103,12 @@ class TechniqueAnalyzer(HasTraits, metaclass=ABCMetaHasTraits):
         return raw_data
 
     @abstractmethod
-    def compute(self, raw_data: RawData) -> tuple[AnalysisData, AnalysisDataInfo]:
-        """Perform the main calculation and return results.
+    def _compute(self, raw_data: RawData) -> tuple[AnalysisData, AnalysisDataInfo]:
+        """Perform the main calculation and return results (internal method).
+
+        Note:
+            This is an internal method. Users should call analyze() instead,
+            which handles validation, preprocessing, computation, and metadata inheritance.
 
         Args:
             raw_data: Preprocessed data container
