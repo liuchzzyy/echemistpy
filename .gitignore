@@ -50,3 +50,4 @@ docs/examples/
 .ruff_cache/
 .benchmarks/
 tests/
+nul
