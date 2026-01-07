@@ -31,12 +31,12 @@
 
 ### 主要特性
 
-- 统一数据格式：以 xarray.Dataset 表示所有实验数据
-- 读取器接口：面向不同仪器/格式的可扩展数据读取与标准化
-- 模块化分析器：模板化实现，便于扩展新技术分析
-- 管道编排：批量处理多测量样品，自动汇总结果
-- 类型安全配置：traitlets 保障配置校验与一致性
-- 插件架构：pluggy 注册机制，灵活扩展技术支持
+- **统一数据格式**：以 `xarray.Dataset` (扁平数据) 和 `xarray.DataTree` (层级数据) 表示所有实验数据
+- **读取器接口**：面向不同仪器/格式的可扩展数据读取与标准化
+- **模块化分析器**：模板化实现，便于扩展新技术分析
+- **管道编排**：批量处理多测量样品，自动汇总结果
+- **类型安全配置**：traitlets 保障配置校验与一致性
+- **插件架构**：pluggy 注册机制，灵活扩展技术支持
 
 > **⚠️ 注意**：echemistpy 正在积极开发中。设计可能会进行更改。请在 [Issue Tracker](https://github.com/liuchzzyy/echemistpy/issues) 中报告问题。
 
@@ -46,31 +46,35 @@
 
 ### 安装（推荐使用 uv）
 
-```powershell
-# 可选：安装目标 Python（如需指定版本）
-uv python install 3.11
+项目使用 [uv](https://github.com/astral-sh/uv) 进行依赖管理和虚拟环境构建。
 
-# 同步依赖并自动创建/更新虚拟环境（读取 pyproject.toml）
+```powershell
+# 1. 同步依赖（自动创建/更新虚拟环境）
 uv sync
 
-# 激活默认虚拟环境（.venv）
+# 2. 安装所有可选依赖分组（文档、交互环境等）
+uv sync --all-groups
+
+# 3. 激活环境
 .venv\Scripts\activate
 ```
 
-### 可选依赖（按需安装）
+### 开发流程
+
+提交代码前，请确保通过以下质量检查：
 
 ```powershell
-# 开发工具（ruff、pytest、pre-commit）
-uv sync --only-group dev
+# 格式化代码
+uv run ruff format src/
 
-# 文档生成
-uv sync --only-group docs
+# 代码质量检查（Lint）
+uv run ruff check src/ --fix
 
-# Jupyter 交互环境
-uv sync --only-group interactive
+# 静态类型检查
+uv run ty check
 
-# 所有依赖分组
-uv sync --all-groups
+# 运行测试
+uv run pytest
 ```
 
 ---
@@ -94,26 +98,57 @@ print(raw_data.data)
 print(raw_info.to_dict())
 ```
 
+### 分析数据
+
+```python
+from echemistpy.processing.analyzers.echem import GalvanostaticAnalyzer
+
+# 创建分析器
+analyzer = GalvanostaticAnalyzer()
+
+# 运行分析
+result_data, result_info = analyzer.analyze(raw_data)
+```
+
+---
+
+## 核心架构
+
+```
+Raw Files -> IOPluginManager -> RawData + RawDataInfo
+                                       |
+                                TechniqueAnalyzer.analyze()
+                                       |
+                               AnalysisData + AnalysisDataInfo
+```
+
+- **IOPluginManager**: 自动识别文件格式并分发给对应的 `Reader`
+- **RawData**: 存储原始测量数据，基于 `xarray`
+- **TechniqueAnalyzer**: 分析算法基类，处理数据验证、预处理和计算
+- **AnalysisData**: 存储分析结果，保持接口统一
+
 ---
 
 ## 项目结构
 
 ```
-
 echemistpy/
 ├── src/echemistpy/
-│ ├── io/ # 数据结构与 I/O
-│ ├── processing/ # 分析与预处理
-│ │ └── analysis/ # 分析器实现
-│ ├── pipelines/ # 管道编排
-│ └── utils/ # 读取器与可视化
-├── tests/ # 单元测试
-├── examples/ # 示例数据
-├── docs/ # Jupyter Notebooks
-├── pyproject.toml # 项目配置
-└── environment.yml # Conda 环境
-
+│   ├── io/                  # 核心 I/O 系统
+│   │   ├── plugins/         # 仪器/格式读取插件
+│   │   ├── loaders.py       # 统一 load() 接口
+│   │   ├── structures.py    # 数据结构 (RawData, AnalysisData)
+│   │   └── plugin_manager.py # 插件管理器
+│   ├── processing/          # 数据处理
+│   │   ├── analyzers/       # 各种技术的分析算法
+│   │   └── pipeline.py      # 分析管道编排
+│   └── utils/               # 工具函数
+├── tests/                   # 单元测试
+├── docs/                    # 文档和示例 Notebooks
+└── pyproject.toml           # 项目与依赖配置
 ```
+
+---
 
 ## 贡献指南
 
@@ -123,10 +158,11 @@ echemistpy/
 
 1. Fork 仓库
 2. 创建功能分支：`git checkout -b feature/my-feature`
-3. 提交更改（格式：`[FEATURE]`、`[FIX]`、`[DOCS]` 等）
-4. 运行测试：`pytest tests/`
-5. 检查代码质量：`ruff check src/`
-6. 提交拉取请求
+3. 提交更改（**中文 Commit**，格式：`[FEATURE]`, `[FIX]`, `[DOCS]` 等）
+4. 运行完整检查：格式化、Lint、类型检查、测试
+5. 提交拉取请求
+
+详细开发指南请参考 [AGENTS.md](AGENTS.md)。
 
 ---
 
@@ -149,4 +185,4 @@ echemistpy/
 }
 ```
 
-**最后更新**: 2025 年 12 月 22 日
+**最后更新**: 2026 年 1 月 7 日

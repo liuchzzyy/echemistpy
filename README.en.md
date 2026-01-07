@@ -32,14 +32,14 @@ Cross-platform: Windows / macOS / Linux
 
 ### Key Features
 
-- Unified data model: represent experimental data as `xarray.Dataset`
-- Reader interfaces: extensible loaders and standardization for instruments/formats
-- Modular analyzers: template-based analyzers, easy to extend for new techniques
-- Pipeline orchestration: batch processing with automatic summary aggregation
-- Type-safe configuration: traitlets-based validation and consistency
-- Plugin architecture: pluggy registry for flexible technique support
+- **Unified Data Model**: Represent experimental data as `xarray.Dataset` (flat) and `xarray.DataTree` (hierarchical)
+- **Reader Interfaces**: Extensible loaders and standardization for various instruments/formats
+- **Modular Analyzers**: Template-based analyzers, easy to extend for new techniques
+- **Pipeline Orchestration**: Batch processing with automatic summary aggregation
+- **Type-safe Configuration**: Traitlets-based validation and consistency
+- **Plugin Architecture**: Pluggy registry for flexible technique support
 
-> Note: echemistpy is under active development. Designs may evolve. Please report issues via the [Issue Tracker](https://github.com/liuchzzyy/echemistpy/issues).
+> **Note**: echemistpy is under active development. Designs may evolve. Please report issues via the [Issue Tracker](https://github.com/liuchzzyy/echemistpy/issues).
 
 ---
 
@@ -47,31 +47,35 @@ Cross-platform: Windows / macOS / Linux
 
 ### Install (uv recommended)
 
-```powershell
-# Optional: install target Python (if you need a specific version)
-uv python install 3.11
+This project uses [uv](https://github.com/astral-sh/uv) for dependency management.
 
-# Sync dependencies and auto-create/update virtualenv based on pyproject.toml
+```powershell
+# 1. Sync dependencies (auto-creates/updates virtualenv)
 uv sync
 
-# Activate default virtual environment (.venv)
+# 2. Install all optional groups (docs, interactive tools, etc.)
+uv sync --all-groups
+
+# 3. Activate environment
 .venv\Scripts\activate
 ```
 
-### Optional dependency groups (install as needed)
+### Development Workflow
+
+Before committing, please run the following quality checks:
 
 ```powershell
-# Development tools (ruff, pytest, pre-commit)
-uv sync --only-group dev
+# Format code
+uv run ruff format src/
 
-# Documentation
-uv sync --only-group docs
+# Lint code
+uv run ruff check src/ --fix
 
-# Jupyter interactive
-uv sync --only-group interactive
+# Type checking
+uv run ty check
 
-# All groups
-uv sync --all-groups
+# Run tests
+uv run pytest
 ```
 
 ---
@@ -95,6 +99,35 @@ print(raw_data.data)
 print(raw_info.to_dict())
 ```
 
+### Analyzing Data
+
+```python
+from echemistpy.processing.analyzers.echem import GalvanostaticAnalyzer
+
+# Initialize analyzer
+analyzer = GalvanostaticAnalyzer()
+
+# Run analysis
+result_data, result_info = analyzer.analyze(raw_data)
+```
+
+---
+
+## Architecture
+
+```
+Raw Files -> IOPluginManager -> RawData + RawDataInfo
+                                       |
+                                TechniqueAnalyzer.analyze()
+                                       |
+                               AnalysisData + AnalysisDataInfo
+```
+
+- **IOPluginManager**: Auto-detects formats and dispatches to appropriate `Reader`
+- **RawData**: Stores raw measurement data (based on `xarray`)
+- **TechniqueAnalyzer**: Base class for analysis algorithms (validation -> preprocessing -> computation)
+- **AnalysisData**: Stores analysis results with a unified interface
+
 ---
 
 ## Project Structure
@@ -102,16 +135,18 @@ print(raw_info.to_dict())
 ```
 echemistpy/
 ├── src/echemistpy/
-│   ├── io/              # Data structures & I/O
-│   ├── processing/      # Analysis & preprocessing
-│   │   └── analysis/    # Analyzer implementations
-│   ├── pipelines/       # Pipeline orchestration
-│   └── utils/           # Readers & visualization
-├── tests/               # Unit tests
-├── examples/            # Example data
-├── docs/                # Jupyter Notebooks
-├── pyproject.toml       # Project configuration
-└── environment.yml      # Conda environment (optional)
+│   ├── io/                  # Core I/O system
+│   │   ├── plugins/         # Instrument/format reader plugins
+│   │   ├── loaders.py       # Unified load() interface
+│   │   ├── structures.py    # Data structures (RawData, AnalysisData)
+│   │   └── plugin_manager.py # Plugin manager
+│   ├── processing/          # Data processing
+│   │   ├── analyzers/       # Analysis algorithms by technique
+│   │   └── pipeline.py      # Analysis pipeline orchestration
+│   └── utils/               # Utilities
+├── tests/                   # Unit tests
+├── docs/                    # Documentation & Jupyter Notebooks
+└── pyproject.toml           # Project configuration
 ```
 
 ---
@@ -124,10 +159,11 @@ We welcome issues and pull requests!
 
 1. Fork the repository
 2. Create a feature branch: `git checkout -b feature/my-feature`
-3. Commit changes with tags: `[FEATURE]`, `[FIX]`, `[DOCS]`, etc.
-4. Run tests: `pytest tests/`
-5. Check code quality: `ruff check src/`
-6. Open a Pull Request
+3. Commit changes (Please use **Chinese** commit messages with tags: `[FEATURE]`, `[FIX]`, `[DOCS]`, etc.)
+4. Run full checks: format, lint, type check, test
+5. Open a Pull Request
+
+See [AGENTS.md](AGENTS.md) for detailed development guidelines.
 
 ---
 
@@ -150,4 +186,4 @@ For details, see the [LICENSE](LICENSE) file in the repository.
 }
 ```
 
----
+**Last Updated**: Jan 7, 2026

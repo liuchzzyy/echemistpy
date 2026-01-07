@@ -4,7 +4,7 @@ include pyproject.toml
 include CITATION.cff
 include README.md
 include README.en.md
-include environments.yml
+
 recursive-include src/echemistpy *.py *.pyi *.tmpl *.css *.csv *.ttf *.txt *.rst *.md *.mplstyle
 recursive-include docs *
 recursive-include examples *.ipynb
