@@ -74,28 +74,10 @@ def build_lmfit_model(config: dict) -> tuple[lmfit.Model, lmfit.Parameters]:
             continue
 
         # Initialize Parameters
-        # lmfit models usually hint/guess parameters, but we rely on explicit config
-        # Mapping config params to lmfit param names
-        # Gaussian/Lorentzian: amplitude, center, sigma
-        # Linear: slope, intercept
-        # Step: amplitude, center, sigma
-
         comp_params = comp.get("params", {})
-        bounds = comp.get("bounds", {})  # {"lower": [val1, val2...], "upper": ...}
-        # Note: bounds format in previous implementation was list based on fixed param order.
-        # lmfit uses named parameters. We need to adapt if we want backward compatibility
-        # or expect user to provide dict of bounds per parameter name.
-        # Let's support a more explicit config style: "params": {"center": {"value": 640, "min": 638, "max": 642}}
-        # But for backward compat with my previous `test_stxm.py`, I used:
-        # "params": {"center": 640.0, ...}, "bounds": {"lower": [...], "upper": [...]}
-        # The list order was implicit. This is brittle.
-        # Let's assume the user now provides explicit dict-based bounds if using lmfit,
-        # OR we try to map the list if we know the order.
+        bounds = comp.get("bounds", {})
 
         # Standard lmfit param names
-        model_param_names = model.param_names
-
-        # Make default guesses to initialize parameters object
         model_params = model.make_params()
 
         # Update values from config
@@ -103,16 +85,8 @@ def build_lmfit_model(config: dict) -> tuple[lmfit.Model, lmfit.Parameters]:
             full_name = f"{prefix}{pname}"
             if full_name in model_params:
                 model_params[full_name].set(value=pval)
-            else:
-                # Handle aliases? e.g. "width" -> "sigma" for step?
-                pass
 
-        # If the user provided the "old style" bounds list, we try to apply them in standard order?
-        # Gaussian/Lorentzian order in lmfit: amplitude, center, sigma
-        # My previous test code used order: amplitude, center, sigma.
-        # Linear: slope, intercept
-
-        # If "bounds" key exists and has "lower"/"upper" lists
+        # Apply bounds if provided
         lower_bounds = bounds.get("lower")
         upper_bounds = bounds.get("upper")
 
@@ -121,7 +95,7 @@ def build_lmfit_model(config: dict) -> tuple[lmfit.Model, lmfit.Parameters]:
         if ctype in ["gaussian", "lorentzian"]:
             param_order = ["amplitude", "center", "sigma"]
         elif ctype in ["arctan", "step"]:
-            param_order = ["amplitude", "center", "sigma"]  # StepModel uses sigma for width
+            param_order = ["amplitude", "center", "sigma"]
         elif ctype == "linear":
             param_order = ["slope", "intercept"]
 
@@ -152,11 +126,12 @@ class STXMAnalyzer(TechniqueAnalyzer):
     """Analyzer for Scanning Transmission X-ray Microscopy (STXM) data.
 
     Workflow:
-    1. Preprocessing (Energy interpolation)
+    1. Preprocessing (Alignment, Energy interpolation)
     2. Denoising (PCA)
     3. Background Removal (Pre-edge linear subtraction)
     4. Thickness Correction (B-Value method)
-    5. Chemical Analysis (ROI Mapping, Onset Energy, Clustering)
+    5. Chemical Analysis (ROI Mapping, Clustering)
+    6. Spectrum Fitting
     """
 
     technique = Unicode("txm")
@@ -187,7 +162,10 @@ class STXMAnalyzer(TechniqueAnalyzer):
 
     # Model Fitting configuration
     fitting_models = Dict(
-        key_trait=Unicode(), value_trait=Dict(), help="Dictionary of model configurations for fitting spectra. Key is name, Value is dict with 'components', 'ranges', 'targets'", default_value={}
+        key_trait=Unicode(),
+        value_trait=Dict(),
+        help="Dictionary of model configurations for fitting spectra. Key is name, Value is dict with 'components', 'ranges', 'targets'",
+        default_value={},
     )
 
     @property
@@ -195,12 +173,7 @@ class STXMAnalyzer(TechniqueAnalyzer):
         return ("optical_density",)
 
     def _get_spatial_dims(self, da: xr.DataArray) -> tuple[str, str]:
-        """Detect spatial dimension names from DataArray.
-
-        Returns:
-            Tuple of (y_dim, x_dim) names.
-        """
-        # Common patterns for spatial dimensions
+        """Detect spatial dimension names from DataArray."""
         y_candidates = ["y", "y_um", "y_nm", "y_px", "Y"]
         x_candidates = ["x", "x_um", "x_nm", "x_px", "X"]
 
@@ -227,15 +200,18 @@ class STXMAnalyzer(TechniqueAnalyzer):
 
         return y_dim, x_dim
 
-    def _align_stack(self, ds: xr.Dataset) -> xr.Dataset:
-        """Align image stack to correct for drift."""
+    # Step 1: Align
+    def align_stack(self, ds: xr.Dataset) -> xr.Dataset:
+        """Align image stack to correct for drift using Scikit-image."""
         if "optical_density" not in ds:
             return ds
 
+        # Work on a copy
+        ds = ds.copy(deep=True)
         da = ds["optical_density"]
+
         # Ensure energy_eV is first dimension for iterating
         if "energy_eV" in da.dims:
-            # transpose returns a new DataArray, doesn't modify ds in place yet
             da_aligned = da.transpose("energy_eV", ...)
         else:
             return ds
@@ -251,7 +227,7 @@ class STXMAnalyzer(TechniqueAnalyzer):
         ref_img = np.nan_to_num(data[ref_idx])
 
         shifts = []
-        logger.info("Aligning stack to frame %d...", ref_idx)
+        logger.info("Aligning stack to frame %d using %s...", ref_idx, self.alignment_method)
 
         for i in range(n_images):
             if i == ref_idx:
@@ -259,31 +235,20 @@ class STXMAnalyzer(TechniqueAnalyzer):
                 continue
 
             curr_img = np.nan_to_num(data[i])
-
             dy, dx = 0.0, 0.0
+
             if self.alignment_method == "phase_correlation":
                 try:
-                    # skimage.registration.phase_cross_correlation returns (shift, error, diffphase)
-                    # We only need shift. upsample_factor enables subpixel precision.
                     shift, _, _ = phase_cross_correlation(ref_img, curr_img, upsample_factor=self.alignment_upsample_factor)
-                    # Shift returned is (y, x) needed to align ref to moving (or vice versa depending on definition)
-                    # Documentation says: "The shift vector (in pixels) required to register moving_image with reference_image."
-                    # So moving + shift = reference.
-                    # We want to shift moving to reference, so we apply the shift.
+                    # shift is [y, x] to move current to ref
                     dy, dx = float(shift[0]), float(shift[1])
                 except Exception as e:
                     logger.debug("Alignment failed for frame %d: %s", i, e)
 
             elif self.alignment_method == "center_of_mass":
                 try:
-                    # Calculate center of mass for reference and current image
-                    # Invert images if features are dark on bright background?
-                    # Usually OD is features bright on dark (0) background.
-                    # If using transmission, features are dark.
-                    # Assuming we are working on 'optical_density' (OD), features are bright (high OD).
                     cy_ref, cx_ref = scipy.ndimage.center_of_mass(ref_img)
                     cy_curr, cx_curr = scipy.ndimage.center_of_mass(curr_img)
-
                     dy = cy_ref - cy_curr
                     dx = cx_ref - cx_curr
                 except Exception as e:
@@ -292,40 +257,31 @@ class STXMAnalyzer(TechniqueAnalyzer):
             shifts.append((dy, dx))
 
             # Apply shift
-            # Use spline interpolation (order=1 for speed/stability)
             data[i] = scipy.ndimage.shift(data[i], (dy, dx), order=1, mode="nearest")
 
         # Update dataset
-        # We assign back to the transposed shape.
-        # If we assign to ds["optical_density"], xarray usually handles alignment by coords.
-        # But 'data' is numpy array. We should wrap it in DataArray with correct dims.
         ds["optical_density"] = (da_aligned.dims, data)
         ds.attrs["alignment_shifts"] = shifts
 
         return ds
 
-    def preprocess(self, raw_data: RawData) -> RawData:
+    # Step 2: Interpolate
+    def interpolate_energy(self, ds: xr.Dataset) -> xr.Dataset:
         """Interpolate energy axis to uniform grid."""
-        ds = raw_data.data
-
-        # 0. Image Alignment (if enabled)
-        if self.align_images:
-            try:
-                ds = self._align_stack(ds)
-            except Exception as e:
-                logger.warning("Image alignment failed: %s", e)
+        # Work on a copy
+        ds = ds.copy(deep=True)
 
         if "energy_eV" not in ds.coords:
             logger.warning("No 'energy_eV' coordinate found. Skipping interpolation.")
-            return raw_data
+            return ds
 
         energy = ds.coords["energy_eV"].values
         if len(energy) < 2:
-            return raw_data
+            return ds
 
-        # Handle duplicate energy values if any
+        # Handle duplicate energy values
         if not ds.indexes["energy_eV"].is_unique:
-            logger.warning("Duplicate energy values found. averaging duplicates.")
+            logger.warning("Duplicate energy values found. Averaging duplicates.")
             ds = ds.drop_duplicates("energy_eV")
             energy = ds.coords["energy_eV"].values
 
@@ -334,111 +290,101 @@ class STXMAnalyzer(TechniqueAnalyzer):
         new_energy = np.arange(e_min, e_max + self.energy_step, self.energy_step)
 
         # Interpolate
-        # We assume 'energy_eV' is a dimension of 'optical_density'
-        # xarray's interp handles missing dimensions gracefully (e.g. if rotation_angle depends on energy_eV)
+        # xarray's interp handles all variables with energy_eV dim
         cleaned_ds = ds.interp(energy_eV=new_energy, method="linear", kwargs={"fill_value": "extrapolate"})
 
-        return RawData(data=cleaned_ds)
+        return cleaned_ds
 
-    def _compute(self, raw_data: RawData) -> tuple[AnalysisData, AnalysisDataInfo]:
-        """Execute the STXM analysis workflow (internal method).
-
-        Note:
-            This is an internal method. Users should call analyze() instead.
-        """
+    def preprocess(self, raw_data: RawData) -> RawData:
+        """Run preprocessing steps: Alignment and Interpolation."""
         ds = raw_data.data.copy(deep=True)
-        results = {}
-        params_dict = {}
 
-        # 1. Denoising (PCA)
-        # Reshape to (Energy, Pixels)
+        if self.align_images:
+            try:
+                ds = self.align_stack(ds)
+            except Exception as e:
+                logger.warning("Image alignment failed: %s", e)
+
+        try:
+            ds = self.interpolate_energy(ds)
+        except Exception as e:
+            logger.warning("Energy interpolation failed: %s", e)
+
+        return RawData(data=ds)
+
+    # Step 3: Denoise (PCA)
+    def denoise_pca(self, ds: xr.Dataset) -> tuple[xr.Dataset, dict]:
+        """Perform PCA denoising on the data."""
+        ds = ds.copy(deep=True)
+        results = {}
+
+        if "optical_density" not in ds:
+            logger.warning("Missing 'optical_density' for PCA.")
+            return ds, results
+
         da = ds["optical_density"]
-        # Ensure dimensions order
         if "energy_eV" in da.dims and da.dims[0] != "energy_eV":
             da = da.transpose("energy_eV", ...)
 
         original_shape = da.shape
         n_energy = original_shape[0]
-        # Flatten spatial dimensions
         flat_data = da.values.reshape(n_energy, -1)
 
-        # Handle NaNs: replace with 0 or mean for PCA
         mask_nan = np.isnan(flat_data)
         flat_data_clean = np.nan_to_num(flat_data) if mask_nan.any() else flat_data
 
-        # SVD (using sklearn PCA)
         try:
-            # Flatten spatial dimensions for PCA: (n_samples, n_features)
-            # In spectral imaging, typically we treat pixels as samples and energy as features?
-            # Or Energy as samples (variables) and pixels as observations?
-            # HyperSpy MVA typically treats the spectral axis as features (variables) and spatial pixels as observations.
-            # But here flat_data is (n_energy, n_pixels).
-            # So flat_data.T is (n_pixels, n_energy).
+            # PCA: X is (n_samples=pixels, n_features=energy)
+            X = flat_data_clean.T
 
-            X = flat_data_clean.T  # (n_samples=pixels, n_features=energy)
-
-            # Use sklearn PCA
             n_comp = min(self.pca_components, min(X.shape))
             pca = PCA(n_components=n_comp)
 
-            # Fit and Transform
-            X_transformed = pca.fit_transform(X)  # (n_pixels, n_components)
+            X_transformed = pca.fit_transform(X)
+            X_reconstructed = pca.inverse_transform(X_transformed)
 
-            # Reconstruct: X_approx = X_transformed @ components_ + mean_
-            X_reconstructed = pca.inverse_transform(X_transformed)  # (n_pixels, n_energy)
-
-            # Transpose back to (n_energy, n_pixels)
             reconstructed_flat = X_reconstructed.T
 
-            # Restore NaNs (if any were masked out, but here we filled them)
             if mask_nan.any():
                 reconstructed_flat[mask_nan] = np.nan
 
-            # Reshape back
             denoised_data = reconstructed_flat.reshape(original_shape)
 
-            # Store in dataset
             ds["denoised"] = (da.dims, denoised_data)
-            params_dict["pca_components"] = n_comp
+            results["pca_components"] = n_comp
             results["pca_explained_variance_ratio"] = pca.explained_variance_ratio_
             results["pca_singular_values"] = pca.singular_values_
-            results["pca_components_matrix"] = pca.components_  # (n_components, n_features)
+            results["pca_components_matrix"] = pca.components_
 
         except Exception as e:
             logger.error("PCA failed: %s", e)
-            ds["denoised"] = da  # Fallback to original
+            ds["denoised"] = da
 
-        # Work with denoised data from here
-        work_da = ds["denoised"]
+        return ds, results
 
-        # 2. Background Removal
-        # Fit linear background to pre-edge
+    # Step 4: Background Removal
+    def remove_background(self, ds: xr.Dataset) -> xr.Dataset:
+        """Remove pre-edge linear background."""
+        ds = ds.copy(deep=True)
+        # Use denoised if available, else original
+        work_da = ds["denoised"] if "denoised" in ds else ds["optical_density"]
+
         e_coords = work_da.coords["energy_eV"].values
         mask_pre = (e_coords >= self.pre_edge_range[0]) & (e_coords <= self.pre_edge_range[1])
 
         if mask_pre.any():
-            # Mean spectrum for pre-edge
-            # We fit each pixel individually? Or just an offset?
-            # Usually powerlaw or linear fit per pixel. For performance in python without numba,
-            # fitting per pixel with curve_fit is slow.
-            # Let's try a vectorized linear fit: y = mx + c
-            # X matrix: [energy, 1]
-            x_pre = e_coords[mask_pre]
-            y_pre = work_da.isel(energy_eV=mask_pre).values.reshape(len(x_pre), -1)
-
-            # Linear regression: beta = (X^T X)^-1 X^T Y
-            # X = column stack of (x_pre, ones)
-            x_mat = np.vstack([x_pre, np.ones(len(x_pre))]).T
-            # beta shape: (2, n_pixels) -> [slope, intercept]
-            # Handle NaNs in Y_pre
             try:
-                # Use least squares
+                x_pre = e_coords[mask_pre]
+                y_pre = work_da.isel(energy_eV=mask_pre).values.reshape(len(x_pre), -1)
+
+                # Linear regression: y = mx + c
+                x_mat = np.vstack([x_pre, np.ones(len(x_pre))]).T
+                # beta: [slope, intercept]
                 beta, _, _, _ = scipy.linalg.lstsq(x_mat, y_pre)
 
-                # Calculate background for all energies
                 x_full = np.vstack([e_coords, np.ones(len(e_coords))]).T
                 background_flat = x_full @ beta
-                background = background_flat.reshape(original_shape)
+                background = background_flat.reshape(work_da.shape)
 
                 ds["background_removed"] = work_da - background
             except Exception as e:
@@ -447,53 +393,40 @@ class STXMAnalyzer(TechniqueAnalyzer):
         else:
             ds["background_removed"] = work_da
 
-        work_da = ds["background_removed"]
+        return ds
 
-        # 3. Thickness Correction (B-Value)
-        # Simplified implementation:
-        # 1. Calculate sum image (or max) to find thin/thick regions
+    # Step 5: Thickness Correction (B-Value)
+    def correct_thickness(self, ds: xr.Dataset) -> tuple[xr.Dataset, dict]:
+        """Apply B-Value correction for thickness effects."""
+        ds = ds.copy(deep=True)
+        results = {}
+
+        work_da = ds["background_removed"] if "background_removed" in ds else (ds["denoised"] if "denoised" in ds else ds["optical_density"])
+
+        # Calculate sum image to find thin/thick regions
         intensity_map = work_da.sum(dim="energy_eV")
-        # Flatten for percentile calculation
         flat_int = intensity_map.values.flatten()
         flat_int = flat_int[~np.isnan(flat_int)]
 
         if len(flat_int) > 0:
             p_low, p_high = np.percentile(flat_int, [10, 90])
-
             mask_thin = intensity_map < p_low
             mask_thick = intensity_map > p_high
 
-            # Get mean spectra
             if mask_thin.any() and mask_thick.any():
                 y_dim, x_dim = self._get_spatial_dims(work_da)
                 spec_thin = work_da.where(mask_thin).mean(dim=[y_dim, x_dim]).values
                 spec_thick = work_da.where(mask_thick).mean(dim=[y_dim, x_dim]).values
 
-                # Fit B-value model
                 try:
                     popt, _ = scipy.optimize.curve_fit(b_value_model, spec_thin, spec_thick, p0=[0.1, 1.0], bounds=([0, 0], [np.inf, np.inf]))
                     b_val, c_val = popt
-                    params_dict["b_value"] = float(b_val)
-                    params_dict["c_value"] = float(c_val)
+                    results["b_value"] = float(b_val)
+                    results["c_value"] = float(c_val)
 
-                    # Apply correction: I_corr = -ln((1+b)*exp(-I) - b)
-                    # Note: The inverse of the B-value model I_thick = f(I_thin) is getting I_thin from I_thick (measured)
-                    # Let y = I_thick (measured), x = I_thin (corrected/ideal)
-                    # exp(-y) = (exp(-x*c) + b) / (1+b)
-                    # exp(-x*c) = exp(-y)*(1+b) - b
-                    # -x*c = ln(exp(-y)*(1+b) - b)
-                    # x = -1/c * ln((1+b)*exp(-y) - b)
-
-                    # Usually C is scaling factor, if we want true absorbance we might ignore C or set C=1 depending on definition.
-                    # The notebook uses: data = -np.log((1 + popt_mapping[0]) * np.exp(-data) - popt_mapping[0])
-                    # This corresponds to c=1 in the inverse formula above.
-
-                    # Compute argument for log
                     arg = (1 + b_val) * np.exp(-work_da) - b_val
-                    # Clip to avoid invalid log
                     arg = xr.where(arg > 1e-9, arg, 1e-9)
                     ds["thickness_corrected"] = -np.log(arg)
-
                 except Exception as e:
                     logger.warning("B-Value correction failed: %s", e)
                     ds["thickness_corrected"] = work_da
@@ -502,128 +435,101 @@ class STXMAnalyzer(TechniqueAnalyzer):
         else:
             ds["thickness_corrected"] = work_da
 
-        work_da = ds["thickness_corrected"]
+        return ds, results
 
-        # 4. Chemical Analysis
+    # Step 6: ROI Selection
+    def apply_rois(self, ds: xr.Dataset) -> xr.Dataset:
+        """Apply ROI selections (Spectral mapping and Spatial extraction)."""
+        ds = ds.copy(deep=True)
+        work_da = ds.get("thickness_corrected", ds.get("background_removed", ds.get("denoised", ds.get("optical_density"))))
 
-        # Onset Energy (e.g. at 10% of max intensity)
-        # We find the energy index where intensity crosses threshold
-        # max_int = work_da.max(dim="energy")
-        # threshold = 0.1 * max_int
-        # TODO: Implement Onset Energy calculation properly
-
-        # ROI Mapping
-        # Support both legacy list and new dict
+        # 1. Spectral ROIs -> Image Maps
         rois_to_process = {}
-
-        # Legacy list
+        # Legacy
         if self.roi_ranges:
-            logger.warning("roi_ranges is deprecated, use roi_maps instead.")
             for start, end in self.roi_ranges:
-                name = f"roi_{start}_{end}"
-                rois_to_process[name] = (start, end)
-
-        # New dict (overrides legacy if same name, but unlikely collision)
-        if self.roi_maps:
-            for name, rng in self.roi_maps.items():
-                if len(rng) >= 2:
-                    rois_to_process[name] = (rng[0], rng[1])
+                rois_to_process[f"roi_{start}_{end}"] = (start, end)
+        # New dict
+        for name, rng in self.roi_maps.items():
+            if len(rng) >= 2:
+                rois_to_process[name] = (rng[0], rng[1])
 
         for name, (start, end) in rois_to_process.items():
-            # Ensure order
             s, e = sorted([start, end])
             mask_roi = (work_da.energy_eV >= s) & (work_da.energy_eV <= e)
             if mask_roi.any():
                 roi_map = work_da.sel(energy_eV=slice(s, e)).mean(dim="energy_eV")
                 ds[name] = roi_map
-            else:
-                logger.warning("ROI %s (%s-%s) empty or out of range.", name, s, e)
 
-        # Spatial ROIs (Extract spectra from regions)
+        # 2. Spatial ROIs -> Spectra
         if self.spatial_rois:
             for name, coords in self.spatial_rois.items():
                 if len(coords) >= 4:
                     x1, x2, y1, y2 = sorted(coords[0:2]) + sorted(coords[2:4])
-                    # Assuming coords are indices/pixels or match coordinate values
-                    # If x/y are integers (pixels), use isel (or sel if coords match).
-                    # Usually users provide coordinates. If x/y are not monotonic, sel(slice) might fail.
-                    # Here we assume coordinates are monotonic (standard image).
                     try:
-                        # Use sel for coordinate based slicing
-                        # Note: slice(min, max) includes bounds in xarray sel
                         y_dim, x_dim = self._get_spatial_dims(work_da)
+                        # Assume coords are indices/pixels for simplicity or consistent with previous usage
+                        # If using sel() with slices, xarray includes bounds.
                         roi_spec = work_da.sel({x_dim: slice(x1, x2), y_dim: slice(y1, y2)}).mean(dim=[y_dim, x_dim])
                         ds[f"spectrum_{name}"] = roi_spec
                     except Exception as e:
                         logger.warning("Spatial ROI %s processing failed: %s", name, e)
 
-        # Clustering
-        # Use denoised or corrected data (here we use thickness_corrected)
-        # Flatten spatial dims
-        flat_data_cluster = work_da.values.reshape(n_energy, -1).T  # (n_pixels, n_energy)
+        return ds
 
-        # Remove NaNs for clustering
-        valid_pixels = ~np.isnan(flat_data_cluster).any(axis=1)
-        data_for_clustering = flat_data_cluster[valid_pixels]
+    # Step 7: Clustering (UMAP + Sklearn)
+    def cluster_analysis(self, ds: xr.Dataset) -> tuple[xr.Dataset, dict]:
+        """Perform clustering analysis (UMAP and/or KMeans/DBSCAN/GMM)."""
+        ds = ds.copy(deep=True)
+        results = {}
+        work_da = ds.get("thickness_corrected", ds.get("background_removed", ds.get("denoised", ds.get("optical_density"))))
 
-        # Optionally use PCA components for clustering if available?
-        # Usually clustering on PCA scores is faster and cleaner.
-        # But let's stick to full spectrum for generic approach, unless user asks.
+        if "energy_eV" in work_da.dims and work_da.dims[0] != "energy_eV":
+            work_da = work_da.transpose("energy_eV", ...)
 
-        # UMAP Embedding
+        original_shape = work_da.shape
+        n_energy = original_shape[0]
+        flat_data = work_da.values.reshape(n_energy, -1).T  # (pixels, energy)
+
+        valid_pixels = ~np.isnan(flat_data).any(axis=1)
+        data_for_clustering = flat_data[valid_pixels]
+
+        if len(data_for_clustering) == 0:
+            return ds, results
+
+        # UMAP
         if self.use_umap:
             try:
-                # Use data_for_clustering (which is valid pixels from corrected/denoised data)
-                # UMAP expects (n_samples, n_features) -> (pixels, energy)
                 reducer = umap.UMAP(
                     n_components=self.umap_n_components,
                     n_neighbors=self.umap_n_neighbors,
                     min_dist=self.umap_min_dist,
                     metric=self.umap_metric,
-                    random_state=42,  # Fix random state for reproducibility
+                    random_state=42,
                 )
                 embedding = reducer.fit_transform(data_for_clustering)
 
-                # Reconstruct embedding maps (y, x, n_components)
-                # We need to fill back the valid pixels
-                # embedding shape: (n_valid_pixels, umap_n_components)
-
-                # Create container for full image
-                # original_shape is (energy, y, x)
-                # map shape is (y, x)
+                # Reconstruct full maps
                 ny, nx = original_shape[1], original_shape[2]
-
                 full_embedding = np.full((ny, nx, self.umap_n_components), np.nan)
-
-                # Assign values
-                # We need indices of valid pixels.
-                # flat_data_cluster was reshaped from (n_energy, n_pixels) -> (n_pixels, n_energy)
-                # valid_pixels is boolean mask of length n_pixels (ny*nx)
-
-                # Flatten spatial dims of target
                 full_flat = full_embedding.reshape(-1, self.umap_n_components)
                 full_flat[valid_pixels] = embedding
                 full_embedding = full_flat.reshape(ny, nx, self.umap_n_components)
 
-                # Store in dataset
-                # xarray dims: (y, x, umap_component)
                 y_dim, x_dim = self._get_spatial_dims(work_da)
                 ds["umap_embeddings"] = ((y_dim, x_dim, "umap_component"), full_embedding)
-
             except Exception as e:
                 logger.warning("UMAP embedding failed: %s", e)
 
+        # Clustering
         if len(data_for_clustering) > self.n_clusters:
             try:
                 labels_valid = None
                 centroids = None
-
-                # Dispatcher for sklearn methods
                 method = self.clustering_method.lower()
                 kwargs = self.clustering_params.copy()
 
                 if method == "kmeans":
-                    # n_clusters from trait or kwargs
                     n_c = kwargs.pop("n_clusters", self.n_clusters)
                     model = KMeans(n_clusters=n_c, **kwargs)
                     labels_valid = model.fit_predict(data_for_clustering)
@@ -640,19 +546,17 @@ class STXMAnalyzer(TechniqueAnalyzer):
                     model = GaussianMixture(n_components=n_c, **kwargs)
                     labels_valid = model.fit_predict(data_for_clustering)
                     centroids = model.means_
-                    # GMM also provides probabilities, maybe store them?
 
                 elif method == "dbscan":
-                    # DBSCAN doesn't use n_clusters
                     model = DBSCAN(**kwargs)
                     labels_valid = model.fit_predict(data_for_clustering)
-                    # No centroids in DBSCAN strictly speaking, but we can compute mean of clusters
                     unique_labels = set(labels_valid)
-                    centroids = []
-                    for l in unique_labels:
-                        if l != -1:
-                            centroids.append(data_for_clustering[labels_valid == l].mean(axis=0))
-                    centroids = np.array(centroids)
+                    centroids_list = []
+                    # DBSCAN labels -1 is noise
+                    valid_labels_sorted = sorted([l for l in unique_labels if l != -1])
+                    for l in valid_labels_sorted:
+                        centroids_list.append(data_for_clustering[labels_valid == l].mean(axis=0))
+                    centroids = np.array(centroids_list) if centroids_list else None
 
                 else:
                     logger.warning("Unknown clustering method %s, falling back to KMeans", method)
@@ -660,137 +564,135 @@ class STXMAnalyzer(TechniqueAnalyzer):
                     labels_valid = model.fit_predict(data_for_clustering)
                     centroids = model.cluster_centers_
 
-                # Reconstruct full label map
                 if labels_valid is not None:
-                    full_labels = np.full(flat_data_cluster.shape[0], -1)
+                    full_labels = np.full(flat_data.shape[0], -1)
                     full_labels[valid_pixels] = labels_valid
-
                     label_map = full_labels.reshape(original_shape[1], original_shape[2])
                     y_dim, x_dim = self._get_spatial_dims(work_da)
                     ds["cluster_labels"] = ((y_dim, x_dim), label_map)
 
-                    # Store centroids
                     if centroids is not None:
                         results["cluster_centroids"] = centroids
 
             except Exception as e:
                 logger.warning("Clustering failed: %s", e)
 
-        # Final cleanup (before fitting)
+        return ds, results
 
-        # 5. Spectrum Fitting
-        if self.fitting_models:
-            fit_results = {}
+    # Step 8: Pixel-wise Fitting (and Spectrum Fitting)
+    def fit_pixels(self, ds: xr.Dataset, cluster_centroids: np.ndarray | None = None) -> tuple[xr.Dataset, dict]:
+        """Perform fitting on identified spectra (ROIs or Clusters)."""
+        ds = ds.copy(deep=True)
+        results = {}
+        fit_results = {}
 
-            # Iterate over defined models
-            for model_name, config in self.fitting_models.items():
-                targets = config.get("targets", [])
-                fit_range = config.get("range", None)
+        if not self.fitting_models:
+            return ds, results
+
+        work_da = ds.get("thickness_corrected", ds.get("background_removed", ds.get("denoised", ds.get("optical_density"))))
+        energy_coords = work_da.coords["energy_eV"].values
+
+        for model_name, config in self.fitting_models.items():
+            targets = config.get("targets", [])
+            fit_range = config.get("range", None)
+
+            try:
+                composite, params = build_lmfit_model(config)
+            except ValueError as e:
+                logger.warning("Skipping model %s: %s", model_name, e)
+                continue
+
+            if composite is None:
+                continue
+
+            # Identify targets
+            spectra_to_fit = {}
+
+            if "cluster_centroids" in targets and cluster_centroids is not None:
+                for i, centroid in enumerate(cluster_centroids):
+                    spectra_to_fit[f"Cluster_{i}"] = (energy_coords, centroid)
+
+            for target in targets:
+                if target.startswith("spectrum_") and target in ds:
+                    da_spec = ds[target]
+                    spectra_to_fit[target] = (da_spec.coords["energy_eV"].values, da_spec.values)
+
+            # Perform Fitting
+            model_fits = {}
+            for spec_name, (x, y) in spectra_to_fit.items():
+                if fit_range:
+                    mask = (x >= fit_range[0]) & (x <= fit_range[1])
+                    x_fit = x[mask]
+                    y_fit = y[mask]
+                else:
+                    x_fit, y_fit = x, y
+
+                if len(x_fit) == 0:
+                    continue
 
                 try:
-                    composite, params = build_lmfit_model(config)
-                except ValueError as e:
-                    logger.warning("Skipping model %s: %s", model_name, e)
-                    continue
+                    result = composite.fit(y_fit, params, x=x_fit)
 
-                if composite is None:
-                    continue
+                    # Extract params for backward compatibility
+                    ordered_values = []
+                    for pname in result.params:
+                        ordered_values.append(result.params[pname].value)
 
-                # Identify targets
-                spectra_to_fit = {}
+                    model_fits[spec_name] = {
+                        "params": ordered_values,
+                        "param_dict": result.best_values,
+                        "chisqr": result.chisqr,
+                        "fitted_curve": (x_fit, result.best_fit),
+                    }
 
-                if "cluster_centroids" in targets and "cluster_centroids" in results:
-                    centroids = results["cluster_centroids"]
-                    for i, centroid in enumerate(centroids):
-                        spectra_to_fit[f"Cluster_{i}"] = (work_da.coords["energy_eV"].values, centroid)
+                    # Evaluate on full range
+                    y_full_calc = composite.eval(result.params, x=x)
+                    da_fit = xr.DataArray(y_full_calc, coords={"energy_eV": x}, dims="energy_eV", name=f"fit_{model_name}_{spec_name}")
+                    ds[f"fit_{model_name}_{spec_name}"] = da_fit
 
-                for target in targets:
-                    if target.startswith("spectrum_") and target in ds:
-                        # Spatial ROI spectrum
-                        da_spec = ds[target]
-                        spectra_to_fit[target] = (da_spec.coords["energy_eV"].values, da_spec.values)
+                except Exception as e:
+                    logger.warning("Fitting %s to %s failed: %s", model_name, spec_name, e)
 
-                # Perform Fitting
-                model_fits = {}
-                for spec_name, (x, y) in spectra_to_fit.items():
-                    # Filter range
-                    if fit_range:
-                        mask = (x >= fit_range[0]) & (x <= fit_range[1])
-                        x_fit = x[mask]
-                        y_fit = y[mask]
-                    else:
-                        x_fit, y_fit = x, y
+            fit_results[model_name] = model_fits
 
-                    if len(x_fit) == 0:
-                        continue
+        results["fitting_results"] = fit_results
+        return ds, results
 
-                    try:
-                        # lmfit fit
-                        result = composite.fit(y_fit, params, x=x_fit)
+    def _compute(self, raw_data: RawData) -> tuple[AnalysisData, AnalysisDataInfo]:
+        """Execute the full STXM analysis workflow."""
+        ds = raw_data.data.copy(deep=True)
+        results = {}
+        params_dict = {}
 
-                        # Store best fit params
-                        # Extract params as list/dict?
-                        # Store dict for flexibility: {name: value}
-                        # Also store the ordered list values for backward compatibility if possible,
-                        # but named is better.
+        # 1. Denoising
+        ds, pca_info = self.denoise_pca(ds)
+        results.update(pca_info)
+        if "pca_components" in pca_info:
+            params_dict["pca_components"] = pca_info["pca_components"]
 
-                        # Flatten params to list of values matching component order?
-                        # build_lmfit_model constructs components c0, c1...
-                        # Param names: c0_amplitude, c0_center...
-                        # Let's just store the result values in a structured way
+        # 2. Background Removal
+        ds = self.remove_background(ds)
 
-                        # Extract parameter values in order of appearance in model?
-                        # Or just a list of all variable parameters.
-                        # For test compatibility, we need values.
-                        # params order in result.params might be sorted? No, insertion order usually.
+        # 3. Thickness Correction
+        ds, bval_info = self.correct_thickness(ds)
+        results.update(bval_info)
+        if "b_value" in bval_info:
+            params_dict["b_value"] = bval_info["b_value"]
+            params_dict["c_value"] = bval_info["c_value"]
 
-                        # Construct a list of parameter values that matches the "p0" expectation from before
-                        # if we want to pass the existing test.
-                        # Previous test expects: [c0_amp, c0_cen, c0_sigma, c1_slope, c1_intercept]
-                        # Our prefixes are c0_, c1_.
-                        ordered_values = []
-                        for pname in result.params:
-                            ordered_values.append(result.params[pname].value)
+        # 4. ROI
+        ds = self.apply_rois(ds)
 
-                        # Store
-                        model_fits[spec_name] = {"params": ordered_values, "param_dict": result.best_values, "chisqr": result.chisqr, "fitted_curve": (x_fit, result.best_fit)}
+        # 5. Clustering
+        ds, clust_info = self.cluster_analysis(ds)
+        results.update(clust_info)
 
-                        # Save curve to dataset
-                        # Evaluate on full x range
-                        # composite.eval(params=result.params, x=x)
-                        y_full_calc = composite.eval(result.params, x=x)
+        # 6. Fitting
+        centroids = clust_info.get("cluster_centroids")
+        ds, fit_info = self.fit_pixels(ds, cluster_centroids=centroids)
+        results.update(fit_info)
 
-                        da_fit = xr.DataArray(y_full_calc, coords={"energy_eV": x}, dims="energy_eV", name=f"fit_{model_name}_{spec_name}")
-                        ds[f"fit_{model_name}_{spec_name}"] = da_fit
-
-                    except Exception as e:
-                        logger.warning("Fitting %s to %s failed: %s", model_name, spec_name, e)
-
-                fit_results[model_name] = model_fits
-
-            results["fitting_results"] = fit_results
-
-        # Populate results
         analysis_data = AnalysisData(data=ds)
-
-        # Populate info
-        # params might be lmfit.Parameters which acts dict-like but could cause issues if passed directly
-        # to something expecting a plain dict if not handled.
-        # AnalysisDataInfo expects parameters to be a Dict.
-        # If params is lmfit.Parameters, we should convert it.
-        # But 'params' in compute() scope is actually 'params' dict initialized at start: params = {}
-        # Wait, 'params' variable was shadowed?
-        # In build_lmfit_model, it returns (model, params).
-        # In compute(), I used: composite, model_params = build_lmfit_model(config)
-        # Ah, I used: composite, params = build_lmfit_model(config)
-        # This overwrote the 'params' dictionary I initialized at line ~203: params = {}
-        # The 'params' passed to AnalysisDataInfo(parameters=params) is now an lmfit.Parameters object from the *last* model loop.
-        # That is wrong. AnalysisDataInfo.parameters should store global analysis parameters (like pca_components).
-
-        # Fix: rename the local variable in the loop.
-
-        # Also need to fix the shadowing.
-
         analysis_info = AnalysisDataInfo(parameters=params_dict, others=results)
 
         return analysis_data, analysis_info
