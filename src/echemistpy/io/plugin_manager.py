@@ -97,6 +97,18 @@ class IOPluginManager(HasTraits):
             current_savers[fmt.lower()] = saver_class
         self.savers = current_savers
 
+    def _get_instrument_name(self, loader_cls: Any) -> str:
+        """Helper to safely extract instrument name from a loader class."""
+        loader_inst = getattr(loader_cls, "instrument", None)
+        if loader_inst is None:
+            return ""
+
+        # Check if it's a traitlet (has default_value)
+        if hasattr(loader_inst, "default_value"):
+            return str(loader_inst.default_value)  # type: ignore
+
+        return str(loader_inst)
+
     def get_loader(self, extension: str, instrument: Optional[str] = None) -> Optional[Any]:
         """获取指定扩展名的加载器，可选择按仪器过滤。
 
@@ -118,27 +130,16 @@ class IOPluginManager(HasTraits):
             return None
 
         if instrument:
+            inst_lower = instrument.lower()
             # 尝试找到匹配仪器名称的加载器
             for loader in loaders:
-                # 检查类的 'instrument' 属性
-                loader_inst = getattr(loader, "instrument", None)
-                inst_name = ""
+                inst_name = self._get_instrument_name(loader)
 
-                # 处理不同类型的 instrument 属性
-                if loader_inst is None:
-                    continue
-                # 检查是否是 traitlet（带有 default_value）
-                elif hasattr(loader_inst, "default_value"):
-                    inst_name = str(loader_inst.default_value)
-                # 如果已经是字符串或其他值
-                elif not hasattr(loader_inst, "default_value"):
-                    inst_name = str(loader_inst)
-
-                if inst_name and inst_name.lower() == instrument.lower():
+                if inst_name and inst_name.lower() == inst_lower:
                     return loader
 
                 # 作为后备，检查类名是否包含仪器名称
-                if instrument.lower() in loader.__name__.lower():
+                if inst_lower in loader.__name__.lower():
                     return loader
 
             # 如果指定了仪器但未找到匹配，返回 None
@@ -190,11 +191,9 @@ class IOPluginManager(HasTraits):
         loaders = self.loaders.get(ext, [])
         instruments = []
         for loader in loaders:
-            loader_inst = getattr(loader, "instrument", None)
-            if hasattr(loader_inst, "default_value"):
-                instruments.append(str(loader_inst.default_value))
-            elif loader_inst is not None:
-                instruments.append(str(loader_inst))
+            inst_name = self._get_instrument_name(loader)
+            if inst_name:
+                instruments.append(inst_name)
             else:
                 instruments.append(loader.__name__)
         return instruments

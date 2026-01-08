@@ -21,6 +21,9 @@
 
 from __future__ import annotations
 
+import importlib
+import pkgutil
+import warnings
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, Optional
 
@@ -32,32 +35,6 @@ from echemistpy.io.structures import (
     RawData,
     RawDataInfo,
 )
-
-# Import default plugins
-try:
-    from echemistpy.io.plugins.Echem_BiologicMPTReader import BiologicMPTReader
-except ImportError:
-    BiologicMPTReader = None  # type: ignore
-
-try:
-    from echemistpy.io.plugins.Echem_LanheXLSXReader import LanheXLSXReader
-except ImportError:
-    LanheXLSXReader = None  # type: ignore
-
-try:
-    from echemistpy.io.plugins.XRD_MSPD import MSPDReader
-except ImportError:
-    MSPDReader = None  # type: ignore
-
-try:
-    from echemistpy.io.plugins.XAS_CLAESS import CLAESSReader
-except ImportError:
-    CLAESSReader = None  # type: ignore
-
-try:
-    from echemistpy.io.plugins.TXM_MISTRAL import MISTRALReader
-except ImportError:
-    MISTRALReader = None  # type: ignore
 
 if TYPE_CHECKING:
     pass
@@ -194,25 +171,12 @@ def list_supported_formats() -> Dict[str, str]:
 
     formats = {}
     for ext, plugin_names in loaders.items():
-        # plugin_names is a list of strings
-        is_biologic = any("biologic" in name.lower() for name in plugin_names)
-        is_lanhe = any("lanhe" in name.lower() for name in plugin_names)
-        is_mspd = any("mspd" in name.lower() for name in plugin_names)
-        is_claess = any("claess" in name.lower() for name in plugin_names)
-        is_mistral = any("mistral" in name.lower() for name in plugin_names)
+        # Clean extension string for display
+        ext_display = ext.lower()
 
-        if is_biologic:
-            formats[ext] = "BioLogic EC-Lab files (.mpt)"
-        elif is_lanhe:
-            formats[ext] = "LANHE battery test files (.xlsx)"
-        elif is_mspd:
-            formats[ext] = "MSPD XRD files (.xye)"
-        elif is_claess:
-            formats[ext] = "ALBA CLAESS XAS files (.dat)"
-        elif is_mistral:
-            formats[ext] = "MISTRAL TXM files (.hdf5)"
-        else:
-            formats[ext] = f"Loaded by {', '.join(plugin_names)}"
+        # Build description
+        plugins_str = ", ".join(plugin_names)
+        formats[ext_display] = f"Loaded by: {plugins_str}"
 
     return formats
 
@@ -223,26 +187,85 @@ def list_supported_formats() -> Dict[str, str]:
 
 
 def _initialize_default_plugins() -> None:
-    """Initialize and register default loader and saver plugins."""
+    """Initialize and register default loader and saver plugins by scanning plugins directory."""
     pm = get_plugin_manager()
     if pm.initialized:
         return
 
-    # Register echem-specific plugins
-    if BiologicMPTReader is not None:
-        pm.register_loader([".mpt"], BiologicMPTReader)
+    # Dynamically discover and import plugins
+    import echemistpy.io.plugins as plugins_pkg
 
-    if LanheXLSXReader is not None:
-        pm.register_loader([".xlsx"], LanheXLSXReader)
+    plugins_path = str(Path(plugins_pkg.__file__).parent)
 
-    if MSPDReader is not None:
-        pm.register_loader([".xye"], MSPDReader)
+    for _, name, _ in pkgutil.iter_modules([plugins_path]):
+        if name.startswith("_"):
+            continue
 
-    if CLAESSReader is not None:
-        pm.register_loader([".dat"], CLAESSReader)
+        try:
+            # Import the module
+            full_name = f"echemistpy.io.plugins.{name}"
+            module = importlib.import_module(full_name)
 
-    if MISTRALReader is not None:
-        pm.register_loader([".hdf5"], MISTRALReader)
+            # Look for reader classes
+            # Reader classes usually register themselves upon import if they have the registration logic
+            # If not, we can inspect and register them here (assuming they have specific attributes)
+
+            # Current implementation assumes plugins are imported and registered manually in the old code.
+            # However, looking at the plugin files, they seem to just define classes inheriting from BaseReader.
+            # They don't seem to self-register.
+            # So we need to inspect the module and find BaseReader subclasses.
+
+            from echemistpy.io.base_reader import BaseReader
+
+            for attr_name in dir(module):
+                attr = getattr(module, attr_name)
+                if isinstance(attr, type) and issubclass(attr, BaseReader) and attr is not BaseReader:
+                    # Found a reader class!
+                    # Now we need to know which extensions it supports.
+                    # We can use the _get_file_extension method or try to inspect metadata
+                    # Since _get_file_extension is an instance method in BaseReader, this is tricky without instantiation.
+                    # But wait, BaseReader defines _get_file_extension.
+
+                    # Strategy: Use a temporary instance or inspect class attributes if available.
+                    # The old code registered specific classes to specific extensions.
+                    # Let's try to infer from class variables or method if static.
+
+                    # For now, let's replicate the mapping logic based on class names or known patterns
+                    # OR update BaseReader/Plugins to have a 'SUPPORTED_EXTENSIONS' class var.
+                    # The current BiologicMPTReader has _get_file_extension as a staticmethod returning '.mpt'.
+
+                    extensions = []
+                    if hasattr(attr, "_get_file_extension"):
+                        # Check if it's a static method or class method we can call without instance
+                        try:
+                            ext = attr._get_file_extension()  # type: ignore
+                            if isinstance(ext, str):
+                                extensions.append(ext)
+                        except (TypeError, AttributeError):
+                            # Instance method, can't call
+                            pass
+
+                    # Fallback mapping based on class names (to match previous logic)
+                    if not extensions:
+                        name_lower = attr.__name__.lower()
+                        if "biologic" in name_lower:
+                            extensions = [".mpt"]
+                        elif "lanhe" in name_lower:
+                            extensions = [".xlsx"]
+                        elif "mspd" in name_lower:
+                            extensions = [".xye"]
+                        elif "claess" in name_lower:
+                            extensions = [".dat"]
+                        elif "mistral" in name_lower:
+                            extensions = [".hdf5"]
+
+                    if extensions:
+                        pm.register_loader(extensions, attr)
+
+        except ImportError as e:
+            warnings.warn(f"Failed to load plugin {name}: {e}", stacklevel=2)
+        except Exception as e:
+            warnings.warn(f"Error initializing plugin {name}: {e}", stacklevel=2)
 
     pm.initialized = True
 

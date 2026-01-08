@@ -22,17 +22,27 @@ from echemistpy.io.structures import RawDataInfo
 logger = logging.getLogger(__name__)
 
 
-def sanitize_variable_names(obj: xr.Dataset | dict[str, Any]) -> xr.Dataset | dict[str, Any]:
+def sanitize_variable_names(obj: xr.Dataset | xr.DataTree | dict[str, Any]) -> xr.Dataset | xr.DataTree | dict[str, Any]:
     """清理变量名，将 '/' 替换为 '_' 以兼容 DataTree。
 
     注意：如果目标名称已存在，则添加后缀以避免冲突。
+    对于 DataTree，递归处理每个节点。
 
     Args:
-        obj: xarray Dataset 或字典进行清理
+        obj: xarray Dataset, DataTree 或字典进行清理
 
     Returns:
-        清理后的 Dataset 或字典，'/' 被替换为 '_'
+        清理后的对象
     """
+    if isinstance(obj, xr.DataTree):
+        # 对 DataTree 的每个节点进行处理
+        def _sanitize_node(ds: xr.Dataset) -> xr.Dataset:
+            # 递归调用处理 Dataset
+            result = sanitize_variable_names(ds)
+            return result if isinstance(result, xr.Dataset) else ds
+
+        return obj.map_over_datasets(_sanitize_node)
+
     if isinstance(obj, xr.Dataset):
         rename_dict = {}
         all_names = list(obj.data_vars) + list(obj.coords)

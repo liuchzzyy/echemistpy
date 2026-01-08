@@ -197,7 +197,7 @@ class BaseReader(HasTraits):
         return RawData(data=tree), merged_info
 
     def _get_file_extension(self) -> str:
-        """获取此 reader 支持的文件扩展名。
+        """获取此读取器支持的文件扩展名。
 
         通过从 plugin_manager 查询已注册的扩展名，避免硬编码。
 
@@ -214,18 +214,15 @@ class BaseReader(HasTraits):
                 if loader is self.__class__:
                     return ext
 
-        # 如果找不到，尝试从 instrument 推断（向后兼容）
-        fallback_extensions = {
-            "biologic": ".mpt",
-            "lanhe": ".xlsx",
-            "alba_mspd": ".xye",
-            "alba_claess": ".dat",
-            "mistral": ".hdf5",
-        }
-
-        for key, ext in fallback_extensions.items():
-            if key in self.instrument.lower():
-                return ext
+        # 尝试通过 instrument 名称查找
+        # 这是一种启发式方法，因为可能多个扩展名对应同一个 instrument
+        # 但在目录加载时，我们只需要一个扩展名来 glob
+        if self.instrument and self.instrument != "unknown":
+            inst_lower = self.instrument.lower()
+            for ext in pm.list_supported_extensions():
+                instruments = [i.lower() for i in pm.get_loader_instruments(ext)]
+                if inst_lower in instruments:
+                    return ext
 
         # 默认返回通配符
         return ".*"

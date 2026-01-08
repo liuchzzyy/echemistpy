@@ -342,10 +342,10 @@ class AnalysisData(BaseData):
 
 
 __all__ = [
+    "AnalysisData",
+    "AnalysisDataInfo",
     "RawData",
     "RawDataInfo",
     "ResultsData",
     "ResultsDataInfo",
-    "AnalysisData",
-    "AnalysisDataInfo",
 ]

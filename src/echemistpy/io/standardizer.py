@@ -17,7 +17,7 @@
 from __future__ import annotations
 
 import warnings
-from typing import Any, ClassVar, Optional
+from typing import Any, ClassVar, Dict, Optional, Tuple
 
 import numpy as np
 import xarray as xr
@@ -32,6 +32,7 @@ from echemistpy.io.column_mappings import (
     get_xps_mappings,
     get_xrd_mappings,
 )
+from echemistpy.io.reader_utils import sanitize_variable_names
 from echemistpy.io.structures import (
     RawData,
     RawDataInfo,
@@ -173,7 +174,8 @@ class DataStandardizer(HasTraits):
         rename_dict = {}
         # 检查数据变量和坐标
         all_names = list(self.dataset.data_vars) + list(self.dataset.coords)
-        for old_name in all_names:
+        for name in all_names:
+            old_name = str(name)
             if old_name in mapping:
                 new_name = mapping[old_name]
                 if new_name != old_name:
@@ -210,11 +212,18 @@ class DataStandardizer(HasTraits):
 
     def standardize_units(self) -> "DataStandardizer":
         """Convert units to standard echemistpy conventions."""
-        # 一次性收集所有需要执行的转换操作
         renames = {}
         conversions = {}
 
-        for var_name in list(self.dataset.data_vars.keys()) + list(self.dataset.coords.keys()):
+        # 辅助函数：替换多种单位后缀
+        def replace_suffixes(name: str, replacements: dict[str, str]) -> str:
+            new_name = name
+            for old, new in replacements.items():
+                new_name = new_name.replace(old, new)
+            return new_name
+
+        for name in list(self.dataset.data_vars.keys()) + list(self.dataset.coords.keys()):
+            var_name = str(name)
             var_data = self.dataset[var_name]
             var_lower = var_name.lower()
 
@@ -236,24 +245,20 @@ class DataStandardizer(HasTraits):
             elif "current" in var_lower or var_name.startswith("I"):
                 if "/a" in var_lower or "_a" in var_lower:
                     conversions[var_name] = lambda x: x * 1000
-                    new_name = var_name.replace("/A", "/mA").replace("_A", "_mA").replace("/a", "/mA").replace("_a", "_mA")
-                    renames[var_name] = new_name
+                    renames[var_name] = replace_suffixes(var_name, {"/A": "/mA", "_A": "_mA", "/a": "/mA", "_a": "_mA"})
                 elif "/μa" in var_lower or "/ua" in var_lower:
                     conversions[var_name] = lambda x: x / 1000
-                    new_name = var_name.replace("/μA", "/mA").replace("/uA", "/mA").replace("/μa", "/mA").replace("/ua", "/mA")
-                    renames[var_name] = new_name
+                    renames[var_name] = replace_suffixes(var_name, {"/μA": "/mA", "/uA": "/mA", "/μa": "/mA", "/ua": "/mA"})
 
             # Handle voltage conversions
             elif ("voltage" in var_lower or "potential" in var_lower or var_name.startswith("E")) and "/mv" in var_lower:
                 conversions[var_name] = lambda x: x / 1000
-                new_name = var_name.replace("/mV", "/V").replace("/mv", "/V")
-                renames[var_name] = new_name
+                renames[var_name] = replace_suffixes(var_name, {"/mV": "/V", "/mv": "/V"})
 
             # Handle capacity conversions
             elif ("capacity" in var_lower or var_name.startswith("Q")) and "/uah" in var_lower:
                 conversions[var_name] = lambda x: x / 1000
-                new_name = var_name.replace("/uAh", "/mAh").replace("/uah", "/mAh")
-                renames[var_name] = new_name
+                renames[var_name] = replace_suffixes(var_name, {"/uAh": "/mAh", "/uah": "/mAh"})
 
         # 批量执行转换（按依赖顺序，先转换再重命名）
         for var_name, converter in conversions.items():
@@ -348,27 +353,11 @@ def standardize_names(
                 s.ensure_required_columns(required_columns)
 
             standardized_ds = s.get_dataset()
-            # Sanitize names for DataTree compatibility (no '/' allowed)
-            # Build rename dict and drop conflicting variables
-            rename_dict = {}
-            vars_to_drop = []
-            for var in standardized_ds.data_vars:
-                var_str = str(var)
-                if "/" in var_str:
-                    new_name = var_str.replace("/", "_")
-                    # Check if the new name already exists (from standardization)
-                    if new_name not in standardized_ds:
-                        rename_dict[var_str] = new_name
-                    else:
-                        # Drop the original variable with "/" since standardized version exists
-                        vars_to_drop.append(var_str)
 
-            if vars_to_drop:
-                standardized_ds = standardized_ds.drop_vars(vars_to_drop)
-            if rename_dict:
-                standardized_ds = standardized_ds.rename(rename_dict)
-
-            return standardized_ds
+            # Sanitize names for DataTree compatibility using utility function
+            # 强制转换为 Dataset，因为 sanitize_variable_names 返回 Union
+            result = sanitize_variable_names(standardized_ds)
+            return result if isinstance(result, xr.Dataset) else standardized_ds
 
         standardized_tree = raw_data.data.map_over_datasets(_standardize_node)
         standardized_data = RawData(data=standardized_tree)
