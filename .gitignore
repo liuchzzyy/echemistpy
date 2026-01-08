@@ -43,8 +43,9 @@ nosetests.xml
 .claude/
 
 # Data & Documentation
-docs/examples/
-docs/characterization/
+docs/*
+!docs/static/
+
 
 # 大型数据文件（保留在本地，不提交到仓库）
 *.mpt
