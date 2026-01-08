@@ -43,9 +43,8 @@ nosetests.xml
 .claude/
 
 # Data & Documentation
-# 显式允许追踪测试数据
-!docs/examples/
-!docs/characterization/
+docs/examples/
+docs/characterization/
 
 # 忽略临时或大容量构建文档（如果存在）
 docs/_build/
