@@ -92,21 +92,19 @@ def build_lmfit_model(config: dict) -> tuple[lmfit.Model, lmfit.Parameters]:
 
         # Define order map for supported types
         param_order = []
-        if ctype in ["gaussian", "lorentzian"]:
-            param_order = ["amplitude", "center", "sigma"]
-        elif ctype in ["arctan", "step"]:
+        if ctype in {"gaussian", "lorentzian"} or ctype in {"arctan", "step"}:
             param_order = ["amplitude", "center", "sigma"]
         elif ctype == "linear":
             param_order = ["slope", "intercept"]
 
         if lower_bounds and len(lower_bounds) == len(param_order):
-            for pname, lb in zip(param_order, lower_bounds):
+            for pname, lb in zip(param_order, lower_bounds, strict=False):
                 full_name = f"{prefix}{pname}"
                 if full_name in model_params:
                     model_params[full_name].set(min=lb)
 
         if upper_bounds and len(upper_bounds) == len(param_order):
-            for pname, ub in zip(param_order, upper_bounds):
+            for pname, ub in zip(param_order, upper_bounds, strict=False):
                 full_name = f"{prefix}{pname}"
                 if full_name in model_params:
                     model_params[full_name].set(max=ub)
@@ -172,7 +170,8 @@ class STXMAnalyzer(TechniqueAnalyzer):
     def required_columns(self) -> tuple[str, ...]:
         return ("optical_density",)
 
-    def _get_spatial_dims(self, da: xr.DataArray) -> tuple[str, str]:
+    @staticmethod
+    def _get_spatial_dims(da: xr.DataArray) -> tuple[str, str]:
         """Detect spatial dimension names from DataArray."""
         y_candidates = ["y", "y_um", "y_nm", "y_px", "Y"]
         x_candidates = ["x", "x_um", "x_nm", "x_px", "X"]
@@ -335,15 +334,23 @@ class STXMAnalyzer(TechniqueAnalyzer):
 
         try:
             # PCA: X is (n_samples=pixels, n_features=energy)
-            X = flat_data_clean.T
+            # sklearn PCA expects (n_samples, n_features).
+            # Here we want to decompose the SPECTRA (features=energy channels) or PIXELS?
+            # Standard PCA for image denoising: Treat each PIXEL as a sample, and ENERGY as features.
+            # So input should be (n_pixels, n_energy).
+            x_input = flat_data_clean.T  # Shape: (n_pixels, n_energy)
 
-            n_comp = min(self.pca_components, min(X.shape))
+            # Standardize? Usually for PCA on spectra we center but might not scale if units are same.
+            # Mantis normalizes each pixel vector to unit length?
+            # Let's keep it simple: Centering is done by PCA automatically.
+
+            n_comp = min(self.pca_components, *x_input.shape)
             pca = PCA(n_components=n_comp)
 
-            X_transformed = pca.fit_transform(X)
-            X_reconstructed = pca.inverse_transform(X_transformed)
+            x_transformed = pca.fit_transform(x_input)
+            x_reconstructed = pca.inverse_transform(x_transformed)
 
-            reconstructed_flat = X_reconstructed.T
+            reconstructed_flat = x_reconstructed.T  # Back to (n_energy, n_pixels)
 
             if mask_nan.any():
                 reconstructed_flat[mask_nan] = np.nan
@@ -355,6 +362,12 @@ class STXMAnalyzer(TechniqueAnalyzer):
             results["pca_explained_variance_ratio"] = pca.explained_variance_ratio_
             results["pca_singular_values"] = pca.singular_values_
             results["pca_components_matrix"] = pca.components_
+
+            # Additional statistics for Scree Plot
+            # To get full eigenvalues (for scree plot beyond n_components), we might need more components
+            # But for performance, we stick to n_comp or a slightly larger number if requested?
+            # Let's just return what we have.
+            results["pca_explained_variance"] = pca.explained_variance_
 
         except Exception as e:
             logger.error("PCA failed: %s", e)
@@ -547,15 +560,15 @@ class STXMAnalyzer(TechniqueAnalyzer):
                     labels_valid = model.fit_predict(data_for_clustering)
                     centroids = model.means_
 
-                elif method == "dbscan":
+                if method == "dbscan":
                     model = DBSCAN(**kwargs)
                     labels_valid = model.fit_predict(data_for_clustering)
                     unique_labels = set(labels_valid)
                     centroids_list = []
                     # DBSCAN labels -1 is noise
-                    valid_labels_sorted = sorted([l for l in unique_labels if l != -1])
-                    for l in valid_labels_sorted:
-                        centroids_list.append(data_for_clustering[labels_valid == l].mean(axis=0))
+                    valid_labels_sorted = sorted({lbl for lbl in unique_labels if lbl != -1})
+                    for lbl in valid_labels_sorted:
+                        centroids_list.append(data_for_clustering[labels_valid == lbl].mean(axis=0))
                     centroids = np.array(centroids_list) if centroids_list else None
 
                 else:
@@ -658,6 +671,95 @@ class STXMAnalyzer(TechniqueAnalyzer):
         results["fitting_results"] = fit_results
         return ds, results
 
+    # Step 9: Chemical Mapping (NNLS)
+    def map_chemical_components(self, ds: xr.Dataset, references: dict[str, np.ndarray]) -> tuple[xr.Dataset, dict]:
+        """Perform Linear Combination Fitting (NNLS) to map chemical components.
+
+        Args:
+            ds: Dataset containing the data (usually 'thickness_corrected' or 'denoised')
+            references: Dictionary of {component_name: spectrum_array}
+
+        Returns:
+            Updated Dataset with component maps and residuals.
+        """
+        ds = ds.copy(deep=True)
+        results = {}
+
+        if not references:
+            return ds, results
+
+        work_da = ds.get("thickness_corrected", ds.get("background_removed", ds.get("denoised", ds.get("optical_density"))))
+
+        # Align references to data energy
+        energy = work_da.coords["energy_eV"].values
+
+        # Build design matrix A (n_energy, n_components)
+        component_names = sorted(references.keys())
+        design_matrix_list = []
+        valid_refs = []
+
+        for name in component_names:
+            ref_spec = references[name]
+            if len(ref_spec) != len(energy):
+                # Simple check, in production might need interpolation
+                logger.warning("Reference %s length %d mismatch with energy %d. Skipping.", name, len(ref_spec), len(energy))
+                continue
+            design_matrix_list.append(ref_spec)
+            valid_refs.append(name)
+
+        if not design_matrix_list:
+            return ds, results
+
+        design_matrix = np.column_stack(design_matrix_list)  # (n_energy, n_components)
+
+        # Prepare data B (n_energy, n_pixels)
+        if "energy_eV" in work_da.dims and work_da.dims[0] != "energy_eV":
+            work_da = work_da.transpose("energy_eV", ...)
+
+        original_shape = work_da.shape
+        n_energy = original_shape[0]
+        flat_data = work_da.values.reshape(n_energy, -1)  # (n_energy, n_pixels)
+
+        # NNLS for each pixel
+        # Solves min|| Ax - b ||_2 for x >= 0
+        # Scipy nnls is for single vector. For matrix, we loop or use optimization.
+        # Since this can be slow, we iterate.
+
+        n_pixels = flat_data.shape[1]
+        n_comps = len(valid_refs)
+        maps = np.zeros((n_comps, n_pixels))
+        residuals = np.zeros(n_pixels)
+
+        # mask nans
+        mask_nan = np.isnan(flat_data).any(axis=0)
+        valid_indices = np.where(~mask_nan)[0]
+
+        # Optimization: Pre-compute if possible?
+        # NNLS is iterative, hard to vectorize simply without external libs like cvxopt or special solvers.
+        # We'll use a loop for now, maybe optimized later.
+
+        for idx in valid_indices:
+            b = flat_data[:, idx]
+            x, rnorm = scipy.optimize.nnls(design_matrix, b)
+            maps[:, idx] = x
+            residuals[idx] = rnorm
+
+        # Reshape back to images
+        y_dim, x_dim = self._get_spatial_dims(work_da)
+        ny, nx = original_shape[1], original_shape[2]
+
+        reshaped_maps = maps.reshape(n_comps, ny, nx)
+        reshaped_resid = residuals.reshape(ny, nx)
+
+        # Store in Dataset
+        for i, name in enumerate(valid_refs):
+            ds[f"map_{name}"] = ((y_dim, x_dim), reshaped_maps[i])
+
+        ds["nnls_residual"] = ((y_dim, x_dim), reshaped_resid)
+        results["mapped_components"] = valid_refs
+
+        return ds, results
+
     def _compute(self, raw_data: RawData) -> tuple[AnalysisData, AnalysisDataInfo]:
         """Execute the full STXM analysis workflow."""
         ds = raw_data.data.copy(deep=True)
@@ -687,10 +789,19 @@ class STXMAnalyzer(TechniqueAnalyzer):
         ds, clust_info = self.cluster_analysis(ds)
         results.update(clust_info)
 
-        # 6. Fitting
+        # 6. Fitting (Peak Fitting)
         centroids = clust_info.get("cluster_centroids")
         ds, fit_info = self.fit_pixels(ds, cluster_centroids=centroids)
         results.update(fit_info)
+
+        # 7. Chemical Mapping (NNLS using Cluster Centroids as references)
+        # This allows "auto-mapping" based on identified clusters
+        if centroids is not None:
+            # Create reference dict from centroids
+            # centroids shape: (n_clusters, n_energy)
+            refs = {f"Cluster_{i}": centroid for i, centroid in enumerate(centroids)}
+            ds, map_info = self.map_chemical_components(ds, refs)
+            results.update(map_info)
 
         analysis_data = AnalysisData(data=ds)
         analysis_info = AnalysisDataInfo(parameters=params_dict, others=results)
