@@ -1,9 +1,9 @@
-# Byte-compiled / optimized / DLL files
+# === echemistpy .gitignore ===
+
+# Python
 __pycache__/
 *.py[cod]
 *$py.class
-
-# Distribution / packaging
 .Python
 build/
 dist/
@@ -11,44 +11,46 @@ dist/
 *.egg-info/
 *.egg
 
-# Virtual environments
+# Virtual Environments
 .env
-.venv
-ENV/
+.venv/
 env/
 venv/
+ENV/
 
-# Installer logs
-pip-log.txt
-pip-delete-this-directory.txt
-
-# Unit test / coverage reports
-htmlcov/
-.tox/
-.nox/
+# Testing & Coverage
 .coverage
 .coverage.*
 .cache
-nosetests.xml
-coverage.xml
-*.cover
-*.py,cover
-.hypothesis/
 .pytest_cache/
+.hypothesis/
+.nox/
+.tox/
+htmlcov/
+coverage.xml
+nosetests.xml
 
-# Editors
-*.swp
-.idea/
+# IDEs & Editors
 .vscode/
+.idea/
 .DS_Store
-.claude/
+*.swp
+*.swo
 
-# data files
-docs/examples/
-docs/characterization/
-
-# ruff cache
+# Project Specific
 .ruff_cache/
 .benchmarks/
-tests/
-nul
+.claude/
+
+# Data & Documentation
+# 显式允许追踪测试数据
+!docs/examples/
+!docs/characterization/
+
+# 忽略临时或大容量构建文档（如果存在）
+docs/_build/
+docs/api/generated/
+
+# OS misc
+Thumbs.db
+desktop.ini
