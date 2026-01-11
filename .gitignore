@@ -59,6 +59,6 @@ docs/*
 docs/_build/
 docs/api/generated/
 
-# OS misc
+
 Thumbs.db
 desktop.ini

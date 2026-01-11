@@ -251,7 +251,7 @@ class CLAESSReader(BaseReader):
             columns = [f"col_{i}" for i in range(len(data_lines[0]))]
 
         try:
-            df = pd.DataFrame(data_lines, columns=columns).astype(float)
+            df = pd.DataFrame(data_lines, columns=list(columns)).astype(float)  # type: ignore
             # Calculate absorption if possible
             if all(c in df.columns for c in ["a_i0_1", "a_i0_2", "a_i1_1", "a_i1_2"]):
                 ratio = (df["a_i0_1"] + df["a_i0_2"]) / (df["a_i1_1"] + df["a_i1_2"])
@@ -286,7 +286,7 @@ class CLAESSReader(BaseReader):
                 new_vars: dict[str, tuple[list[str], np.ndarray]] = {}
                 for var in ds.data_vars:
                     f = interp1d(ds.energyc.values, ds[var].values, bounds_error=False, fill_value=np.nan)
-                    new_vars[var] = (["energyc"], f(ref_energy))
+                    new_vars[str(var)] = (["energyc"], f(ref_energy))
                 interpolated_list.append(xr.Dataset(new_vars, coords={"energyc": ref_energy}))
             else:
                 interpolated_list.append(ds)

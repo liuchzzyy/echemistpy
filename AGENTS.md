@@ -13,7 +13,7 @@ uv run pytest               # 运行测试
 ## 强制规范
 
 ### 1. 代码质量流程
-提交前必须依次执行：`format` -> `check` -> `ty check`。
+提交前必须依次执行：`format` -> `check` -> `ty check` -> `test`。
 
 ### 2. 类型与风格
 - **类型注解**：所有函数必须包含类型注解。优先使用 modern syntax (`list[str]`, `str | None`)。
@@ -25,6 +25,10 @@ uv run pytest               # 运行测试
 - **语言**：必须使用**中文**。
 - **格式**：`[PREFIX] 描述`。
 - **前缀**：`[FEATURE]`, `[FIX]`, `[DOCS]`, `[REFACTOR]`, `[TEST]`, `[CHORE]`。
+- **示例**:
+    - `[FEATURE] 添加 Biologic MPT 文件读取支持`
+    - `[FIX] 修复 XAS 数据对齐时的维度错误`
+
 
 ## 架构核心
 

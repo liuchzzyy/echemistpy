@@ -105,7 +105,7 @@ class DataStandardizer(HasTraits):
         Returns:
             列名映射字典
         """
-        tech_category = tech.lower() if tech.lower() in self.ECHEM_TECHNIQUES else tech.lower()
+        tech_category = tech.lower()
 
         # 根据技术类别获取映射
         mapping_getters = {
@@ -207,10 +207,10 @@ class DataStandardizer(HasTraits):
             # 添加不在首选列表中的其他变量
             other_vars = [v for v in self.dataset.data_vars if v not in preferred]
             # 重排
-            self.dataset = self.dataset[existing_vars + other_vars]
+            self.dataset = self.dataset[existing_vars + other_vars]  # type: ignore
             break  # 只应用第一个技术的顺序
 
-    def standardize_units(self) -> "DataStandardizer":
+    def standardize_units(self) -> "DataStandardizer":  # noqa: PLR0912
         """Convert units to standard echemistpy conventions."""
         renames = {}
         conversions = {}

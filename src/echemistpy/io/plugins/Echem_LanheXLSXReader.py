@@ -95,7 +95,10 @@ class LanheXLSXReader(BaseReader):
         ds = self._set_primary_index(ds)
 
         # 4. Metadata Packaging
-        raw_info = self._create_raw_info(path, cleaned_metadata, mass)
+        cleaned_metadata["file_path"] = str(path)
+        if mass:
+            cleaned_metadata["active_material_mass"] = mass
+        raw_info = self._create_raw_info(cleaned_metadata, str(cleaned_metadata.get("test_name", path.stem)))
 
         return RawData(data=ds), raw_info
 
@@ -163,7 +166,12 @@ class LanheXLSXReader(BaseReader):
                     return ds.set_index(record=col)
         return ds
 
-    def _create_raw_info(self, path: Path, metadata: dict[str, Any], mass: Any) -> RawDataInfo:
+    def _create_raw_info(
+        self,
+        metadata: dict[str, Any],
+        default_sample_name: str,
+        technique_override: list[str] | None = None,
+    ) -> RawDataInfo:
         """Create a RawDataInfo object from metadata.
 
         Args:
@@ -174,6 +182,8 @@ class LanheXLSXReader(BaseReader):
         Returns:
             RawDataInfo object
         """
+        path = Path(metadata.get("file_path", ""))
+        mass = metadata.get("active_material_mass")
         start_time_val = self.start_time or metadata.get("start_time")
         if isinstance(start_time_val, datetime):
             start_time_val = start_time_val.strftime("%Y-%m-%d %H:%M:%S")
@@ -183,13 +193,13 @@ class LanheXLSXReader(BaseReader):
         if tech_list == ["echem"]:
             tech_list.append("gcd")
 
-        metadata_with_path = {**metadata, "file_path": str(path)}
+        metadata_with_path = {**metadata}
 
         return RawDataInfo(
-            sample_name=self.sample_name or str(metadata.get("test_name", path.stem)),
+            sample_name=self.sample_name or default_sample_name,
             start_time=start_time_val,
             operator=self.operator or metadata.get("operator"),
-            technique=tech_list,
+            technique=technique_override or tech_list,
             instrument=self.instrument,
             active_material_mass=mass,
             wave_number=self.wave_number,

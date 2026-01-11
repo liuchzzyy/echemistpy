@@ -47,7 +47,7 @@ def b_value_model(x: np.ndarray, b: float, c: float) -> np.ndarray:
     return term1 - term2
 
 
-def build_lmfit_model(config: dict) -> tuple[lmfit.Model, lmfit.Parameters]:
+def build_lmfit_model(config: dict) -> tuple[lmfit.Model, lmfit.Parameters]:  # noqa: PLR0912
     """Build a composite model from configuration dictionary using lmfit."""
     components = config.get("components", [])
     if not components:
@@ -67,7 +67,7 @@ def build_lmfit_model(config: dict) -> tuple[lmfit.Model, lmfit.Parameters]:
             model = lmfit.models.LorentzianModel(prefix=prefix)
         elif ctype == "linear":
             model = lmfit.models.LinearModel(prefix=prefix)
-        elif ctype == "arctan" or ctype == "step":
+        elif ctype in {"arctan", "step"}:
             model = lmfit.models.StepModel(prefix=prefix, form="arctan")
         else:
             logger.warning("Unknown component type: %s, skipping", ctype)
@@ -116,6 +116,9 @@ def build_lmfit_model(config: dict) -> tuple[lmfit.Model, lmfit.Parameters]:
             composite_model += model
 
         params.update(model_params)
+
+    if composite_model is None:
+        raise ValueError("No valid components found in configuration")
 
     return composite_model, params
 
@@ -191,17 +194,22 @@ class STXMAnalyzer(TechniqueAnalyzer):
 
         if y_dim is None or x_dim is None:
             # Fallback: assume last two dims are spatial
-            non_energy_dims = [d for d in da.dims if "energy" not in d.lower()]
+            non_energy_dims = [str(d) for d in da.dims if "energy" not in str(d).lower()]
             if len(non_energy_dims) >= 2:
                 y_dim, x_dim = non_energy_dims[-2:]
             else:
                 raise ValueError(f"Could not detect spatial dimensions from {da.dims}")
 
-        return y_dim, x_dim
+        return str(y_dim), str(x_dim)
 
     # Step 1: Align
-    def align_stack(self, ds: xr.Dataset) -> xr.Dataset:
+    def align_stack(self, ds: xr.Dataset | xr.DataTree) -> xr.Dataset:  # noqa: PLR0914
         """Align image stack to correct for drift using Scikit-image."""
+        if isinstance(ds, xr.DataTree):
+            if ds.dataset is None:
+                raise TypeError("align_stack requires a Dataset or DataTree with a root dataset")
+            ds = ds.dataset
+
         if "optical_density" not in ds:
             return ds
 
@@ -265,8 +273,13 @@ class STXMAnalyzer(TechniqueAnalyzer):
         return ds
 
     # Step 2: Interpolate
-    def interpolate_energy(self, ds: xr.Dataset) -> xr.Dataset:
+    def interpolate_energy(self, ds: xr.Dataset | xr.DataTree) -> xr.Dataset:
         """Interpolate energy axis to uniform grid."""
+        if isinstance(ds, xr.DataTree):
+            if ds.dataset is None:
+                raise TypeError("interpolate_energy requires a Dataset or DataTree with a root dataset")
+            ds = ds.dataset
+
         # Work on a copy
         ds = ds.copy(deep=True)
 
@@ -409,7 +422,7 @@ class STXMAnalyzer(TechniqueAnalyzer):
         return ds
 
     # Step 5: Thickness Correction (B-Value)
-    def correct_thickness(self, ds: xr.Dataset) -> tuple[xr.Dataset, dict]:
+    def correct_thickness(self, ds: xr.Dataset) -> tuple[xr.Dataset, dict]:  # noqa: PLR0914
         """Apply B-Value correction for thickness effects."""
         ds = ds.copy(deep=True)
         results = {}
@@ -491,7 +504,7 @@ class STXMAnalyzer(TechniqueAnalyzer):
         return ds
 
     # Step 7: Clustering (UMAP + Sklearn)
-    def cluster_analysis(self, ds: xr.Dataset) -> tuple[xr.Dataset, dict]:
+    def cluster_analysis(self, ds: xr.Dataset) -> tuple[xr.Dataset, dict]:  # noqa: PLR0912, PLR0915, PLR0914
         """Perform clustering analysis (UMAP and/or KMeans/DBSCAN/GMM)."""
         ds = ds.copy(deep=True)
         results = {}
@@ -593,7 +606,7 @@ class STXMAnalyzer(TechniqueAnalyzer):
         return ds, results
 
     # Step 8: Pixel-wise Fitting (and Spectrum Fitting)
-    def fit_pixels(self, ds: xr.Dataset, cluster_centroids: np.ndarray | None = None) -> tuple[xr.Dataset, dict]:
+    def fit_pixels(self, ds: xr.Dataset, cluster_centroids: np.ndarray | None = None) -> tuple[xr.Dataset, dict]:  # noqa: PLR0912, PLR0914
         """Perform fitting on identified spectra (ROIs or Clusters)."""
         ds = ds.copy(deep=True)
         results = {}
@@ -672,7 +685,7 @@ class STXMAnalyzer(TechniqueAnalyzer):
         return ds, results
 
     # Step 9: Chemical Mapping (NNLS)
-    def map_chemical_components(self, ds: xr.Dataset, references: dict[str, np.ndarray]) -> tuple[xr.Dataset, dict]:
+    def map_chemical_components(self, ds: xr.Dataset, references: dict[str, np.ndarray]) -> tuple[xr.Dataset, dict]:  # noqa: PLR0914
         """Perform Linear Combination Fitting (NNLS) to map chemical components.
 
         Args:

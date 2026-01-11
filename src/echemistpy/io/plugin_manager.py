@@ -12,7 +12,7 @@
 使用示例：
     >>> from echemistpy.io.plugin_manager import get_plugin_manager
     >>> pm = get_plugin_manager()
-    >>> pm.register_loader(['.mpt'], BiologicMPTReader)
+    >>> # pm.register_loader(['.mpt'], BiologicMPTReader)
     >>> loader = pm.get_loader('.mpt', instrument='biologic')
 """
 
@@ -36,7 +36,7 @@ class IOPluginManager(HasTraits):
 
     Example:
         >>> pm = IOPluginManager.get_instance()
-        >>> pm.register_loader(['.csv'], MyCSVReader)
+        >>> # pm.register_loader(['.csv'], MyCSVReader)
         >>> reader_class = pm.get_loader('.csv')
     """
 
@@ -97,7 +97,8 @@ class IOPluginManager(HasTraits):
             current_savers[fmt.lower()] = saver_class
         self.savers = current_savers
 
-    def _get_instrument_name(self, loader_cls: Any) -> str:
+    @staticmethod
+    def _get_instrument_name(loader_cls: Any) -> str:
         """Helper to safely extract instrument name from a loader class."""
         loader_inst = getattr(loader_cls, "instrument", None)
         if loader_inst is None:

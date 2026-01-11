@@ -428,7 +428,7 @@ class GalvanostaticAnalyzer(TechniqueAnalyzer):
                 return np.full_like(data, norm_min)
         return data
 
-    def _build_2d_result_dataset(  # noqa: PLR0913, PLR0917
+    def _build_2d_result_dataset(  # noqa: PLR0913, PLR0917, PLR0914, PLR0912, PLR0915
         self,
         ds: xr.Dataset,
         cycles_dict: dict[int, xr.Dataset],
@@ -491,7 +491,7 @@ class GalvanostaticAnalyzer(TechniqueAnalyzer):
                 global_time = self._get_numeric_time(ds[time_key].values)
                 t_min, t_max = global_time.min(), global_time.max()
 
-            def norm_time_func(c, cycle_num):
+            def norm_time_func(c, _cycle_num):
                 time_vals = self._get_numeric_time(c[time_key].values)
                 # 只为指定的循环计算归一化值，其他返回 NaN
                 if cycle_num in specified_cycles:
@@ -506,11 +506,13 @@ class GalvanostaticAnalyzer(TechniqueAnalyzer):
             # 默认：全局归一化所有数据
             global_time = self._get_numeric_time(ds[time_key].values)
             t_min, t_max = global_time.min(), global_time.max()
-            norm_time_func = lambda c, cycle_num: (
-                norm_min + (self._get_numeric_time(c[time_key].values) - t_min) / (t_max - t_min) * (norm_max - norm_min)
-                if t_max > t_min
-                else np.full_like(self._get_numeric_time(c[time_key].values), norm_min)
-            )
+
+            def norm_time_func(c, _cycle_num):
+                return (
+                    norm_min + (self._get_numeric_time(c[time_key].values) - t_min) / (t_max - t_min) * (norm_max - norm_min)
+                    if t_max > t_min
+                    else np.full_like(self._get_numeric_time(c[time_key].values), norm_min)
+                )
 
         def create_2d_array_with_cycle(data_getter):
             """创建二维数组，从每个 cycle 获取数据，支持 cycle_num 参数."""
@@ -537,7 +539,7 @@ class GalvanostaticAnalyzer(TechniqueAnalyzer):
 
         result_vars["current_ua"] = (["cycle_number", "record"], create_2d_array(lambda c: c[cur_key].values))
 
-        if capacity is not None:
+        if capacity is not None:  # noqa: PLR1702
             result_vars["capacity_uah"] = (
                 ["cycle_number", "record"],
                 create_2d_array(lambda c: c[cap_key].values if cap_key else np.array([])),
@@ -562,7 +564,7 @@ class GalvanostaticAnalyzer(TechniqueAnalyzer):
                         # 如果指定的循环不存在，使用全局范围
                         cap_min, cap_max = capacity.min(), capacity.max()
 
-                    def norm_cap_2d(c, cycle_num):
+                    def norm_cap_2d(c, _cycle_num):
                         if cap_key and cap_key in c:
                             cap_vals = c[cap_key].values
                             if len(cap_vals) > 0:
@@ -580,7 +582,7 @@ class GalvanostaticAnalyzer(TechniqueAnalyzer):
                     # 默认：全局归一化所有容量数据
                     cap_min, cap_max = capacity.min(), capacity.max()
 
-                    def norm_cap_2d(c, cycle_num):
+                    def norm_cap_2d(c, _cycle_num):
                         if cap_key and cap_key in c:
                             cap_vals = c[cap_key].values
                             if len(cap_vals) > 0:
@@ -674,7 +676,7 @@ class GalvanostaticAnalyzer(TechniqueAnalyzer):
         dt = np.gradient(t_numeric)
 
         # 累计电荷 (电流对时间的积分)
-        cumulative_charge = np.cumsum(current * dt)
+        np.cumsum(current * dt)
 
         # 2. 归一化处理
         norm_min, norm_max = self.normalization_range[0], self.normalization_range[1]

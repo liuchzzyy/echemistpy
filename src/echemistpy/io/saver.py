@@ -29,12 +29,12 @@ from echemistpy.io.structures import (
 class MetadataEncoder(json.JSONEncoder):
     """Custom JSON encoder for metadata containing datetime objects."""
 
-    def default(self, obj: Any) -> Any:
-        if isinstance(obj, (datetime, date)):
-            return obj.isoformat()
-        if isinstance(obj, Path):
-            return str(obj)
-        return super().default(obj)
+    def default(self, o: Any) -> Any:
+        if isinstance(o, (datetime, date)):
+            return o.isoformat()
+        if isinstance(o, Path):
+            return str(o)
+        return super().default(o)
 
 
 def _to_list(obj: Any) -> list[Any]:
@@ -56,10 +56,9 @@ def _sanitize_dataset(ds: xr.Dataset) -> xr.Dataset:
 
     # 2. Handle timedelta64 units conflict
     for var_name in list(ds.data_vars) + list(ds.coords):
-        if ds[var_name].dtype.kind == "m":  # timedelta64
-            if "units" in ds[var_name].attrs:
-                # Remove units attribute to let xarray handle encoding
-                del ds[var_name].attrs["units"]
+        if ds[var_name].dtype.kind == "m" and "units" in ds[var_name].attrs:
+            # Remove units attribute to let xarray handle encoding
+            del ds[var_name].attrs["units"]
 
     return ds
 

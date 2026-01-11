@@ -11,12 +11,12 @@
 
 使用示例：
     >>> from echemistpy.io import load
-    >>> # 自动检测格式
-    >>> raw_data, raw_info = load("data.mpt", sample_name="MySample")
+    >>> # 自动检测格式 (需要文件存在)
+    >>> # raw_data, raw_info = load("data.mpt", sample_name="MySample")
     >>> # 指定仪器（对于有多个读取器的格式）
-    >>> raw_data, raw_info = load("data.xlsx", instrument="lanhe")
+    >>> # raw_data, raw_info = load("data.xlsx", instrument="lanhe")
     >>> # 加载目录
-    >>> raw_data, raw_info = load("./data_dir", instrument="biologic")
+    >>> # raw_data, raw_info = load("./data_dir", instrument="biologic")
 """
 
 from __future__ import annotations
@@ -40,7 +40,7 @@ if TYPE_CHECKING:
     pass
 
 
-def load(
+def load(  # noqa: PLR0912
     path: str | Path,
     fmt: Optional[str] = None,
     technique: Optional[str | list[str]] = None,
@@ -186,18 +186,20 @@ def list_supported_formats() -> Dict[str, str]:
 # ============================================================================
 
 
-def _initialize_default_plugins() -> None:
+def _initialize_default_plugins() -> None:  # noqa: PLR0912
     """Initialize and register default loader and saver plugins by scanning plugins directory."""
     pm = get_plugin_manager()
     if pm.initialized:
         return
 
     # Dynamically discover and import plugins
-    import echemistpy.io.plugins as plugins_pkg
+    import echemistpy.io.plugins as plugins_pkg  # noqa: PLC0415
 
-    plugins_path = str(Path(plugins_pkg.__file__).parent)
+    plugins_path = str(Path(plugins_pkg.__file__).parent) if plugins_pkg.__file__ else None
+    if not plugins_path:
+        return
 
-    for _, name, _ in pkgutil.iter_modules([plugins_path]):
+    for _, name, _ in pkgutil.iter_modules([plugins_path]):  # noqa: PLR1702
         if name.startswith("_"):
             continue
 
@@ -215,7 +217,7 @@ def _initialize_default_plugins() -> None:
             # They don't seem to self-register.
             # So we need to inspect the module and find BaseReader subclasses.
 
-            from echemistpy.io.base_reader import BaseReader
+            from echemistpy.io.base_reader import BaseReader  # noqa: PLC0415
 
             for attr_name in dir(module):
                 attr = getattr(module, attr_name)

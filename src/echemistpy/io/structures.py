@@ -26,7 +26,7 @@ class MetadataInfoMixin:
         """
         # trait_values() 返回实例的所有 trait 值
         # 无需 cast，因为 self 继承自 HasTraits
-        trait_values = self.trait_values()
+        trait_values = self.trait_values()  # type: ignore
         return {k: v for k, v in trait_values.items() if v is not None}
 
     def get(self, key: str, default: Any = None) -> Any:
@@ -42,7 +42,7 @@ class MetadataInfoMixin:
             元数据值或默认值
         """
         # 首先检查标准字段
-        if self.has_trait(key):
+        if self.has_trait(key):  # type: ignore
             return getattr(self, key)
 
         # 检查动态存储位置（parameters 或 others，如果存在）
@@ -70,10 +70,10 @@ class MetadataInfoMixin:
             container = self.others
 
         for key, value in other.items():
-            if self.has_trait(key):
+            if self.has_trait(key):  # type: ignore
                 setattr(self, key, value)
             elif container is not None and isinstance(container, dict):
-                container[key] = value
+                container[key] = value  # type: ignore
 
 
 class XarrayDataMixin:

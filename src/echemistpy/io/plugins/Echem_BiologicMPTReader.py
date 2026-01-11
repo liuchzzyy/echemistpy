@@ -218,13 +218,27 @@ def _read_mpt_content(mpt_file: Any, encoding: str = "latin1") -> tuple[np.ndarr
         if not fn or not fn.strip():
             fieldnames[i] = f"empty_column_{i}"
 
-    record_type = np.dtype(list(map(fieldname_to_dtype, fieldnames)))
+    dtype_list = []
+    for fn in fieldnames:
+        if fn == "time/s":
+            dtype_list.append((fn, "U30"))
+        else:
+            dtype_list.append(fieldname_to_dtype(fn))
+    record_type = np.dtype(dtype_list)
 
     def str_to_float(s: str) -> float:
+        if not s:
+            return np.nan
         return float(s.replace(",", "."))
 
-    converter_dict: dict[int, Any] = dict.fromkeys(range(len(fieldnames)), str_to_float)
-    mpt_array = np.loadtxt(mpt_file, dtype=record_type, converters=converter_dict)  # type: ignore[arg-type]
+    converter_dict = {}
+    for i, fn in enumerate(fieldnames):
+        if fn == "time/s":
+            converter_dict[i] = lambda s: s
+        else:
+            converter_dict[i] = str_to_float
+
+    mpt_array = np.loadtxt(mpt_file, dtype=record_type, converters=converter_dict, delimiter="\t")  # type: ignore[arg-type]
 
     return mpt_array, comments
 
@@ -393,10 +407,23 @@ class BiologicMPTReader(BaseReader):
 
         # Time
         acq_start = metadata.get("file_info", {}).get("Acquisition started on", "")
-        if acq_start and "time/s" in names:
-            systimes = _calculate_systime(acq_start, mpt_array["time/s"])
-            extra_coords["systime"] = (["record"], systimes)
-            extra_coords["time_s"] = (["record"], (systimes - systimes[0]).dt.total_seconds())
+        if "time/s" in names:
+            time_data = mpt_array["time/s"]
+            if time_data.dtype.kind in {"S", "U", "O"}:
+                # It's strings (dates)
+                try:
+                    systimes = pd.to_datetime(time_data)
+                except Exception:
+                    systimes = pd.to_datetime(time_data, errors="coerce")
+
+                extra_coords["systime"] = (["record"], systimes)
+                # Calculate time_s as seconds from start
+                if not systimes.empty:
+                    extra_coords["time_s"] = (["record"], (systimes - systimes[0]).total_seconds())
+            elif acq_start:
+                systimes = _calculate_systime(acq_start, time_data)
+                extra_coords["systime"] = (["record"], systimes)
+                extra_coords["time_s"] = (["record"], (systimes - systimes[0]).dt.total_seconds())
 
         # Specific Capacity
         if mass and "Capacity/mA.h" in names:

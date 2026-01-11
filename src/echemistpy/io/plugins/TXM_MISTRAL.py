@@ -135,7 +135,8 @@ class MISTRALReader(BaseReader):
                 return f"{d[:4]}-{d[4:6]}-{d[6:]}"
         return None
 
-    def _get_file_extension(self) -> str:
+    @staticmethod
+    def _get_file_extension() -> str:
         """Get the file extension for this reader.
 
         Returns:

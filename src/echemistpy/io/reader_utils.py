@@ -146,11 +146,7 @@ def merge_infos(  # noqa: PLR0914
 
     # 确定文件夹名称：对于相对路径（如 '.' 或 '..'）使用解析后的绝对路径名称
     # 注意：Path('.').name 返回空字符串 ''，而非 '.'
-    if not root_path.name or root_path.name in {".", ".."}:
-        # 使用 resolve() 获取绝对路径，然后取目录名
-        folder_name = root_path.resolve().name
-    else:
-        folder_name = root_path.name
+    folder_name = root_path.resolve().name if not root_path.name or root_path.name in {".", ".."} else root_path.name
 
     return RawDataInfo(
         sample_name=sample_name_override or folder_name,
