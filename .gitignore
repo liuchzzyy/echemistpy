@@ -43,17 +43,8 @@ nosetests.xml
 .claude/
 
 # Data & Documentation
-docs/*
-!docs/static/
-
-
-# 大型数据文件（保留在本地，不提交到仓库）
-*.mpt
-*.xlsx
-*.hdf5
-*.xye
-*.dat
-*.lis
+# docs/* (Completely remove the wildcard ignore)
+# !docs/static/
 
 # 忽略临时或大容量构建文档（如果存在）
 docs/_build/
