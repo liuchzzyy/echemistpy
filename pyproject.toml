@@ -38,6 +38,7 @@ dependencies = [
   "umap-learn>=0.5.5",
   "numba>=0.57.0", # Ensure python 3.11 compatibility
   "lmfit>=1.2.2",
+  "xraylarch>=0.9.78", # XAS Analysis
   # File formats
   "openpyxl>=3.1.5",  # Excel files
   # Development tools

@@ -202,8 +202,10 @@ def create_default_registry() -> TechniqueRegistry:
     """
     from .echem import GalvanostaticAnalyzer  # noqa: PLC0415
     from .stxm import STXMAnalyzer  # noqa: PLC0415
+    from .xas import XASAnalyzer  # noqa: PLC0415
 
     registry = TechniqueRegistry()
     registry.register(GalvanostaticAnalyzer())
     registry.register(STXMAnalyzer())
+    registry.register(XASAnalyzer())
     return registry

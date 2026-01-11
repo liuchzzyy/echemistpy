@@ -48,7 +48,22 @@ uv run pytest               # 运行测试
     - `_compute(self, raw_data)`: 实现核心算法。
 - **调用**: 统一通过 `analyzer.analyze(raw_data, raw_info)` 调用以确保元数据继承。
 
+### 新增模块 (XAS 支持)
+- **预处理 (`processing/preprocessing/xas.py`)**:
+    - `calibrate_energy`: 能量校准
+    - `align_spectra`: 谱图对齐
+    - `deglitch`, `smooth`: 数据清洗
+    - `correct_fluorescence`: 自吸收校正
+- **数学工具 (`processing/math/fitting.py`)**:
+    - PCA, NMF (降维)
+    - LCF (线性组合拟合)
+- **分析器 (`processing/analyzers/xas.py`)**:
+    - `XASAnalyzer`: 封装 `xraylarch` (Normalization, AutoBK, FFT)
+- **可视化 (`visualization/plot_xas.py`)**:
+    - `plot_echem_xas`: 电化学-光谱同步图 (LC Plot)
+
 ## 推荐库
 - 拟合：`pybaselines`, `lmfit`
 - 图像：`scikit-image`
 - 机器学习：`scikit-learn`, `umap-learn`
+- XAS 分析：`xraylarch`
