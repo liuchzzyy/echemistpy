@@ -13,8 +13,11 @@ Unified data processing library for scientific workflows. Standardizes data inge
 ├── src/echemistpy/
 │   ├── core/                 # Shared constants and base types
 │   ├── io/                   # Data ingestion (See src/echemistpy/io/AGENTS.md)
-│   ├── processing/           # Analysis logic (See src/echemistpy/processing/AGENTS.md)
-│   └── visualization/        # Plotting utilities (plot_xas.py)
+│   ├── analysis/             # Domain Logic (See src/echemistpy/analysis/AGENTS.md)
+│   │   ├── xas/              # X-ray Absorption Spectroscopy
+│   │   ├── echem/            # Electrochemistry
+│   │   └── stxm/             # Scanning Transmission X-ray Microscopy
+│   └── ...
 └── tests/                    # Pytest suite
 ```
 
@@ -22,9 +25,9 @@ Unified data processing library for scientific workflows. Standardizes data inge
 | Task | Location | Notes |
 |------|----------|-------|
 | **Add Instrument Support** | `src/echemistpy/io/plugins/` | Implement `BaseReader` subclass |
-| **Add Analysis Algorithm** | `src/echemistpy/processing/analyzers/` | Implement `TechniqueAnalyzer` subclass |
+| **Add Analysis Algorithm** | `src/echemistpy/analysis/{domain}/` | Implement `TechniqueAnalyzer` subclass |
 | **Data Structure Logic** | `src/echemistpy/io/structures.py` | `RawData` / `AnalysisData` definitions |
-| **XAS Logic** | `src/echemistpy/processing/**/xas.py` | Distributed across preprocessing/analyzers |
+| **XAS Logic** | `src/echemistpy/analysis/xas/` | Self-contained domain module |
 
 ## CONVENTIONS
 - **Strict Typing**: All functions must have type hints. Use `uv run ty check`.
@@ -51,4 +54,4 @@ uv run pytest
 ## ARCHITECTURE HIGHLIGHTS
 - **IOPluginManager**: Singleton that auto-discovers readers in `io/plugins`.
 - **TechniqueRegistry**: Maps `(technique, instrument)` to analyzers.
-- **Metadata Inheritance**: Automatic flow of metadata from Raw -> Analysis results.
+- **Domain-Driven Design**: Logic is grouped by scientific domain (`xas`, `echem`) not software layer.

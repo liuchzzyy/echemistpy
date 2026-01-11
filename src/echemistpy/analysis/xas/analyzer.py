@@ -3,15 +3,15 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Optional, cast
+from typing import Any, Optional
 
 import numpy as np
 import xarray as xr
 from traitlets import Dict, Unicode
 
+from echemistpy.analysis.registry import TechniqueAnalyzer
+from echemistpy.analysis.xas.processing import find_e0_by_derivative
 from echemistpy.io.structures import AnalysisData, AnalysisDataInfo, RawData
-from echemistpy.processing.analyzers.registry import TechniqueAnalyzer
-from echemistpy.processing.preprocessing.xas import find_e0_by_derivative
 
 try:
     from larch import Group  # type: ignore
@@ -160,7 +160,7 @@ class XASAnalyzer(TechniqueAnalyzer):
                     theo_val = float(self.theoretical_e0)
                     current_e0 = find_e0_by_derivative(e_clean, mu_clean, theoretical_e0=theo_val, search_range=50.0)
                 except Exception as e:
-                    logger.warning(f"Constrained E0 search failed: {e}")
+                    logger.warning("Constrained E0 search failed: %s", e)
 
             res = analyzer.normalize(e0=current_e0, **self.normalize_params)
 
@@ -171,7 +171,7 @@ class XASAnalyzer(TechniqueAnalyzer):
             results["e0"] = res["e0"]
             results["edge_step"] = res["edge_step"]
         except Exception as e:
-            logger.warning(f"Normalization failed: {e}")
+            logger.warning("Normalization failed: %s", e)
 
         # 2. AutoBK
         try:
@@ -179,7 +179,7 @@ class XASAnalyzer(TechniqueAnalyzer):
             results["k"] = res["k"]
             results["chi_k"] = res["chi"]
         except Exception as e:
-            logger.warning(f"AutoBK failed: {e}")
+            logger.warning("AutoBK failed: %s", e)
 
         # 3. FFT
         try:
@@ -187,7 +187,7 @@ class XASAnalyzer(TechniqueAnalyzer):
             results["r"] = res["r"]
             results["chir_mag"] = res["chir_mag"]
         except Exception as e:
-            logger.warning(f"FFT failed: {e}")
+            logger.warning("FFT failed: %s", e)
 
         return results
 

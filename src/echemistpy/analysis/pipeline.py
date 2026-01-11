@@ -9,7 +9,7 @@ from typing import Any
 from echemistpy.io import load
 from echemistpy.io.structures import AnalysisData, AnalysisDataInfo
 
-from .analyzers.registry import TechniqueRegistry, create_default_registry
+from .registry import TechniqueRegistry, create_default_registry
 
 logger = logging.getLogger(__name__)
 

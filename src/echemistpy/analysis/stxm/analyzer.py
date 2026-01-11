@@ -12,6 +12,7 @@ import scipy.ndimage
 import scipy.optimize
 import umap
 import xarray as xr
+from echemistpy.processing.analyzers.registry import TechniqueAnalyzer
 from skimage.registration import phase_cross_correlation
 from sklearn.cluster import DBSCAN, KMeans, MiniBatchKMeans
 from sklearn.decomposition import PCA
@@ -19,7 +20,6 @@ from sklearn.mixture import GaussianMixture
 from traitlets import Bool, Dict, Float, Int, List, Unicode
 
 from echemistpy.io.structures import AnalysisData, AnalysisDataInfo, RawData
-from echemistpy.processing.analyzers.registry import TechniqueAnalyzer
 
 logger = logging.getLogger(__name__)
 

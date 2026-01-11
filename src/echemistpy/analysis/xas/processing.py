@@ -4,12 +4,15 @@ Handles data cleaning, calibration, and alignment.
 """
 
 from __future__ import annotations
+
 import logging
+from typing import Optional
+
 import numpy as np
 import xarray as xr
 from scipy.interpolate import interp1d
-from scipy.signal import savgol_filter, medfilt
-from typing import Optional, Any
+from scipy.signal import medfilt, savgol_filter
+
 from echemistpy.core.elements import ELEMENT_DB
 
 try:
@@ -58,17 +61,16 @@ def calibrate_energy(ds: xr.Dataset, element: str, edge: str = "K", reference_e0
     # Use the constrained derivative method as requested
     if element in ELEMENT_DB and "e0" in ELEMENT_DB[element]:
         theo_lookup = ELEMENT_DB[element]["e0"]
+    # If not in DB, try larch or default
+    elif reference_e0:
+        theo_lookup = reference_e0
     else:
-        # If not in DB, try larch or default
-        if reference_e0:
-            theo_lookup = reference_e0
+        # Fallback to Larch lookup
+        ref_data = xray_edge(element, edge)  # type: ignore
+        if isinstance(ref_data, tuple):
+            theo_lookup = ref_data[0]
         else:
-            # Fallback to Larch lookup
-            ref_data = xray_edge(element, edge)  # type: ignore
-            if isinstance(ref_data, tuple):
-                theo_lookup = ref_data[0]
-            else:
-                theo_lookup = ref_data
+            theo_lookup = ref_data
 
     # Use reference_e0 as the "theoretical" center if provided, otherwise the DB value
     center_e0 = reference_e0 if reference_e0 is not None else theo_lookup
@@ -107,7 +109,7 @@ def find_e0_by_derivative(
     mask = (energy >= theoretical_e0 - search_range) & (energy <= theoretical_e0 + search_range)
 
     if not np.any(mask):
-        logger.warning(f"No data points in E0 search range {theoretical_e0} +/- {search_range}. Using global maximum derivative.")
+        logger.warning("No data points in E0 search range %s +/- %s. Using global maximum derivative.", theoretical_e0, search_range)
         idx = np.argmax(dmu)
     else:
         # Find max derivative in the window
@@ -336,7 +338,7 @@ def correct_fluorescence(
         if hasattr(group, "mu_corr"):
             corrected_mu[i] = group.mu_corr
         else:
-            logger.warning(f"Fluorescence correction failed for record {i}, using original.")
+            logger.warning("Fluorescence correction failed for record %s, using original.", i)
             corrected_mu[i] = mu[i]
 
     if not is_2d:
@@ -427,8 +429,7 @@ def merge_spectra(ds: xr.Dataset, indices: Optional[list[int]] = None, method: s
     # Create new dataset
     # Preserve coordinates except record
     coords = dict(ds.coords)
-    if "record" in coords:
-        del coords["record"]
+    coords.pop("record", None)
 
     ds_out = xr.Dataset(data_vars={"absorption": (("energyc"), merged_mu)}, coords=coords)
 

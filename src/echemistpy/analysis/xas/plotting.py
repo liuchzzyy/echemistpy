@@ -1,14 +1,16 @@
 """Visualization module for XAS analysis."""
 
 from __future__ import annotations
-from typing import Any, Optional, Union
+
 import logging
-from matplotlib.figure import Figure
-import matplotlib.pyplot as plt
+from typing import Any, Optional, Union
+
 import matplotlib.dates as mdates
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import xarray as xr
+from matplotlib.figure import Figure
 
 logger = logging.getLogger(__name__)
 

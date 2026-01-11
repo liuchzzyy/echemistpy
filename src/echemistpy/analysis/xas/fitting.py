@@ -4,13 +4,15 @@ Handles PCA, NMF, and Linear Combination Fitting (LCF).
 """
 
 from __future__ import annotations
+
 import logging
+from typing import Any, Optional
+
 import numpy as np
 import xarray as xr
-from typing import Optional, Any, cast
 
 try:
-    from sklearn.decomposition import PCA, NMF  # type: ignore
+    from sklearn.decomposition import NMF, PCA  # type: ignore
 
     HAS_SKLEARN = True
 except ImportError:
@@ -239,7 +241,7 @@ def perform_lcf(
 
         # Extract weights
         # Explicitly ignore type check for result.params
-        res_params = getattr(result, "params")
+        res_params = result.params
         w = [res_params[name].value for name in ref_names]
         weights_list.append(w)
 
