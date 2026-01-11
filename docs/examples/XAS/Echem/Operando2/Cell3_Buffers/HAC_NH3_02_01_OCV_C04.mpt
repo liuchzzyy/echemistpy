@@ -1,0 +1,88 @@
+EC-Lab ASCII FILE
+Nb header lines : 53                          
+
+Open Circuit Voltage
+
+Run on channel : 4 (SN 52456)
+User : 
+CE vs. WE compliance from -10 V to 10 V
+Electrode connection : standard
+Potential control : Ewe
+Ewe ctrl range : min = 0.00 V, max = 3.00 V
+Safety Limits :
+	Do not start on E overload
+Acquisition started on : 12/12/2025 14:30:15.519
+Technique started on : 12/12/2025 14:30:16.019
+Loaded Setting File :  L:\projects\cycle2025-II\20250340369-skhabazian\EC_lab\20251211.EMD.mps
+Saved on :
+	File : HAC_NH3_02_01_OCV_C04.mpr
+	Directory : L:\projects\cycle2025-II\20250340369-skhabazian\EC_lab\Cell3_Buffers\
+	Host : 84.89.228.57
+Device : VSP (SN 2155)
+Address : 10.0.48.130
+EC-LAB for windows v11.61 (software)
+Internet server v11.61 (firmware)
+Command interpretor v11.61 (firmware)
+Electrode material : 
+Initial state : 
+Electrolyte : 
+Comments : 
+Mass of active material : 0.001 mg
+ at x = 0.000
+Molecular weight of active material (at x = 0) : 0.001 g/mol
+Atomic weight of intercalated ion : 0.001 g/mol
+Acquisition started at : xo = 0.000
+Number of e- transfered per intercalated ion : 1
+for DX = 1, DQ = 26.802 mA.h
+Battery capacity : 0.000 A.h
+Electrode surface area : 0.000 cm²
+Characteristic mass : 0.001 g
+Volume (V) : 0.001 cm³
+Text export
+   Mode : Standard
+   Time format : Absolute MMDDYYYY
+Cycle Definition : Charge/Discharge alternance
+tR (h:m:s)          20:00:30.0000       
+dER/dt (mV/h)       0.0                 
+record              <Ewe>               
+dER (mV)            0.00                
+dtR (s)             0.5000              
+E range min (V)     0.000               
+E range max (V)     3.000               
+
+mode	error	time/s	<Ewe/V>	
+3	0	12/12/2025 14:30:16.0190	1.4080049E+000
+3	0	12/12/2025 14:30:16.5190	1.4084243E+000
+3	0	12/12/2025 14:30:17.0190	1.4088390E+000
+3	0	12/12/2025 14:30:17.5190	1.4092518E+000
+3	0	12/12/2025 14:30:18.0190	1.4096580E+000
+3	0	12/12/2025 14:30:18.5190	1.4100646E+000
+3	0	12/12/2025 14:30:19.0190	1.4104716E+000
+3	0	12/12/2025 14:30:19.5190	1.4108657E+000
+3	0	12/12/2025 14:30:20.0190	1.4112581E+000
+3	0	12/12/2025 14:30:20.5190	1.4116529E+000
+3	0	12/12/2025 14:30:21.0190	1.4120378E+000
+3	0	12/12/2025 14:30:21.5190	1.4124143E+000
+3	0	12/12/2025 14:30:22.0190	1.4127961E+000
+3	0	12/12/2025 14:30:22.5190	1.4131707E+000
+3	0	12/12/2025 14:30:23.0190	1.4135418E+000
+3	0	12/12/2025 14:30:23.5190	1.4139111E+000
+3	0	12/12/2025 14:30:24.0190	1.4142739E+000
+3	0	12/12/2025 14:30:24.5190	1.4146334E+000
+3	0	12/12/2025 14:30:25.0190	1.4149941E+000
+3	0	12/12/2025 14:30:25.5190	1.4153570E+000
+3	0	12/12/2025 14:30:26.0190	1.4157002E+000
+3	0	12/12/2025 14:30:26.5190	1.4160477E+000
+3	0	12/12/2025 14:30:27.0190	1.4163994E+000
+3	0	12/12/2025 14:30:27.5190	1.4167385E+000
+3	0	12/12/2025 14:30:28.0190	1.4170759E+000
+3	0	12/12/2025 14:30:28.5190	1.4174170E+000
+3	0	12/12/2025 14:30:29.0190	1.4177557E+000
+3	0	12/12/2025 14:30:29.5190	1.4180846E+000
+3	0	12/12/2025 14:30:30.0190	1.4184148E+000
+3	0	12/12/2025 14:30:30.5190	1.4187438E+000
+3	0	12/12/2025 14:30:31.0190	1.4190584E+000
+3	0	12/12/2025 14:30:31.5190	1.4193742E+000
+3	0	12/12/2025 14:30:32.0190	1.4196920E+000
+3	0	12/12/2025 14:30:32.5190	1.4200079E+000
+3	0	12/12/2025 14:30:32.6188	1.4201909E+000

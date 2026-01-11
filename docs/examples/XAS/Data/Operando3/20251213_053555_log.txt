@@ -1,0 +1,53 @@
+2025-12-13 05:35:55,437 - INFO     Start experiment run 1
+2025-12-13 05:35:55,437 - INFO     Fitting the beam
+2025-12-13 05:37:39,784 - INFO     Scan sample Buff_NoFe_P1
+2025-12-13 05:38:14,195 - INFO     Calibrating electrometers...
+2025-12-13 05:38:14,391 - INFO     em_range e_i0_1 1uA e_i0_2 1uA e_i1_1 100nA e_i1_2 100nA 
+2025-12-13 05:39:54,443 - INFO     Scan done: /beamlines/bl22/projects/cycle2025-II/20250340369-skhabazian/DATA/RAW/Operando3/Buff_NoFe_P1/Mn/Buff_NoFe_P1_XAS_Mn_K_1_27.dat scans_id: 161766 - 161766
+2025-12-13 05:39:54,571 - INFO     Calibrating electrometers...
+2025-12-13 05:39:54,768 - INFO     em_range e_i0_1 10uA e_i0_2 10uA e_i1_1 10uA e_i1_2 10uA 
+2025-12-13 05:41:32,481 - INFO     Scan done: /beamlines/bl22/projects/cycle2025-II/20250340369-skhabazian/DATA/RAW/Operando3/Buff_NoFe_P1/Zn/Buff_NoFe_P1_XAS_Zn_K_1_27.dat scans_id: 161767 - 161767
+2025-12-13 05:41:32,503 - INFO     Scan sample Buff_Fe_P1
+2025-12-13 05:42:06,902 - INFO     Calibrating electrometers...
+2025-12-13 05:42:07,099 - INFO     em_range e_i0_1 1uA e_i0_2 1uA e_i1_1 10nA e_i1_2 10nA 
+2025-12-13 05:43:11,437 - INFO     Scan done: /beamlines/bl22/projects/cycle2025-II/20250340369-skhabazian/DATA/RAW/Operando3/Buff_Fe_P1/Mn/Buff_Fe_P1_XAS_Mn_K_1_27.dat scans_id: 161768 - 161768
+2025-12-13 05:43:11,534 - INFO     Calibrating electrometers...
+2025-12-13 05:43:11,728 - INFO     em_range e_i0_1 1uA e_i0_2 1uA e_i1_1 100nA e_i1_2 100nA 
+2025-12-13 05:44:52,762 - INFO     Scan done: /beamlines/bl22/projects/cycle2025-II/20250340369-skhabazian/DATA/RAW/Operando3/Buff_Fe_P1/Fe/Buff_Fe_P1_XAS_Fe_K_1_27.dat scans_id: 161769 - 161769
+2025-12-13 05:44:52,857 - INFO     Calibrating electrometers...
+2025-12-13 05:44:53,049 - INFO     em_range e_i0_1 1uA e_i0_2 1uA e_i1_1 1uA e_i1_2 1uA 
+2025-12-13 05:46:30,447 - INFO     Scan done: /beamlines/bl22/projects/cycle2025-II/20250340369-skhabazian/DATA/RAW/Operando3/Buff_Fe_P1/Zn/Buff_Fe_P1_XAS_Zn_K_1_27.dat scans_id: 161770 - 161770
+2025-12-13 05:46:30,468 - INFO     Scan sample Buff_NoFe_P2
+2025-12-13 05:47:04,883 - INFO     Calibrating electrometers...
+2025-12-13 05:47:05,084 - INFO     em_range e_i0_1 1uA e_i0_2 1uA e_i1_1 100nA e_i1_2 100nA 
+2025-12-13 05:48:46,229 - INFO     Scan done: /beamlines/bl22/projects/cycle2025-II/20250340369-skhabazian/DATA/RAW/Operando3/Buff_NoFe_P2/Mn/Buff_NoFe_P2_XAS_Mn_K_1_27.dat scans_id: 161771 - 161771
+2025-12-13 05:48:46,343 - INFO     Calibrating electrometers...
+2025-12-13 05:48:46,540 - INFO     em_range e_i0_1 10uA e_i0_2 10uA e_i1_1 10uA e_i1_2 10uA 
+2025-12-13 05:50:23,748 - INFO     Scan done: /beamlines/bl22/projects/cycle2025-II/20250340369-skhabazian/DATA/RAW/Operando3/Buff_NoFe_P2/Zn/Buff_NoFe_P2_XAS_Zn_K_1_27.dat scans_id: 161772 - 161772
+2025-12-13 05:50:23,768 - INFO     Scan sample Buff_Fe_P2
+2025-12-13 05:50:58,166 - INFO     Calibrating electrometers...
+2025-12-13 05:50:58,361 - INFO     em_range e_i0_1 1uA e_i0_2 1uA e_i1_1 10nA e_i1_2 10nA 
+2025-12-13 05:52:02,784 - INFO     Scan done: /beamlines/bl22/projects/cycle2025-II/20250340369-skhabazian/DATA/RAW/Operando3/Buff_Fe_P2/Mn/Buff_Fe_P2_XAS_Mn_K_1_26.dat scans_id: 161773 - 161773
+2025-12-13 05:52:02,881 - INFO     Calibrating electrometers...
+2025-12-13 05:52:03,075 - INFO     em_range e_i0_1 1uA e_i0_2 1uA e_i1_1 100nA e_i1_2 100nA 
+2025-12-13 05:53:44,624 - INFO     Scan done: /beamlines/bl22/projects/cycle2025-II/20250340369-skhabazian/DATA/RAW/Operando3/Buff_Fe_P2/Fe/Buff_Fe_P2_XAS_Fe_K_1_26.dat scans_id: 161774 - 161774
+2025-12-13 05:53:44,724 - INFO     Calibrating electrometers...
+2025-12-13 05:53:44,917 - INFO     em_range e_i0_1 1uA e_i0_2 1uA e_i1_1 1uA e_i1_2 1uA 
+2025-12-13 05:55:21,769 - INFO     Scan done: /beamlines/bl22/projects/cycle2025-II/20250340369-skhabazian/DATA/RAW/Operando3/Buff_Fe_P2/Zn/Buff_Fe_P2_XAS_Zn_K_1_26.dat scans_id: 161775 - 161775
+2025-12-13 05:55:21,790 - INFO     Scan sample Buff_NoFe_el
+2025-12-13 05:55:56,199 - INFO     Calibrating electrometers...
+2025-12-13 05:55:56,399 - INFO     em_range e_i0_1 1uA e_i0_2 1uA e_i1_1 100nA e_i1_2 100nA 
+2025-12-13 05:57:37,439 - INFO     Scan done: /beamlines/bl22/projects/cycle2025-II/20250340369-skhabazian/DATA/RAW/Operando3/Buff_NoFe_el/Mn/Buff_NoFe_el_XAS_Mn_K_1_25.dat scans_id: 161776 - 161776
+2025-12-13 05:57:37,575 - INFO     Calibrating electrometers...
+2025-12-13 05:57:37,772 - INFO     em_range e_i0_1 10uA e_i0_2 10uA e_i1_1 10uA e_i1_2 10uA 
+2025-12-13 05:59:15,291 - INFO     Scan done: /beamlines/bl22/projects/cycle2025-II/20250340369-skhabazian/DATA/RAW/Operando3/Buff_NoFe_el/Zn/Buff_NoFe_el_XAS_Zn_K_1_25.dat scans_id: 161777 - 161777
+2025-12-13 05:59:15,312 - INFO     Scan sample Buff_Fe_el
+2025-12-13 05:59:49,713 - INFO     Calibrating electrometers...
+2025-12-13 05:59:49,906 - INFO     em_range e_i0_1 1uA e_i0_2 1uA e_i1_1 10nA e_i1_2 10nA 
+2025-12-13 06:00:55,196 - INFO     Scan done: /beamlines/bl22/projects/cycle2025-II/20250340369-skhabazian/DATA/RAW/Operando3/Buff_Fe_el/Mn/Buff_Fe_el_XAS_Mn_K_1_25.dat scans_id: 161778 - 161778
+2025-12-13 06:00:55,293 - INFO     Calibrating electrometers...
+2025-12-13 06:00:55,488 - INFO     em_range e_i0_1 1uA e_i0_2 1uA e_i1_1 100nA e_i1_2 100nA 
+2025-12-13 06:02:37,332 - INFO     Scan done: /beamlines/bl22/projects/cycle2025-II/20250340369-skhabazian/DATA/RAW/Operando3/Buff_Fe_el/Fe/Buff_Fe_el_XAS_Fe_K_1_25.dat scans_id: 161779 - 161779
+2025-12-13 06:02:37,426 - INFO     Calibrating electrometers...
+2025-12-13 06:02:37,620 - INFO     em_range e_i0_1 1uA e_i0_2 1uA e_i1_1 1uA e_i1_2 1uA 
+2025-12-13 06:04:14,296 - INFO     Scan done: /beamlines/bl22/projects/cycle2025-II/20250340369-skhabazian/DATA/RAW/Operando3/Buff_Fe_el/Zn/Buff_Fe_el_XAS_Zn_K_1_25.dat scans_id: 161780 - 161780

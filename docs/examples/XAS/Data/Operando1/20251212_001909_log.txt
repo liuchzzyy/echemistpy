@@ -1,0 +1,44 @@
+2025-12-12 00:19:09,510 - INFO     Start experiment run 1
+2025-12-12 00:19:09,510 - INFO     Fitting the beam
+2025-12-12 00:20:53,428 - INFO     Scan sample Electrodep_D_P1
+2025-12-12 00:21:28,297 - INFO     Calibrating electrometers...
+2025-12-12 00:21:28,494 - INFO     em_range e_i0_1 1uA e_i0_2 1uA e_i1_1 1uA e_i1_2 1uA 
+2025-12-12 00:23:08,089 - INFO     Scan done: /beamlines/bl22/projects/cycle2025-II/20250340369-skhabazian/DATA/RAW/Operando1/Electrodep_D_P1/Mn/Electrodep_D_P1_XAS_Mn_K_1_21.dat scans_id: 160846 - 160846
+2025-12-12 00:23:08,186 - INFO     Calibrating electrometers...
+2025-12-12 00:23:08,381 - INFO     em_range e_i0_1 10uA e_i0_2 10uA e_i1_1 10uA e_i1_2 10uA 
+2025-12-12 00:24:46,494 - INFO     Scan done: /beamlines/bl22/projects/cycle2025-II/20250340369-skhabazian/DATA/RAW/Operando1/Electrodep_D_P1/Zn/Electrodep_D_P1_XAS_Zn_K_1_21.dat scans_id: 160847 - 160847
+2025-12-12 00:24:46,541 - INFO     Scan sample Electrodep_C_P1
+2025-12-12 00:25:21,401 - INFO     Calibrating electrometers...
+2025-12-12 00:25:21,599 - INFO     em_range e_i0_1 1uA e_i0_2 1uA e_i1_1 1uA e_i1_2 1uA 
+2025-12-12 00:27:02,358 - INFO     Scan done: /beamlines/bl22/projects/cycle2025-II/20250340369-skhabazian/DATA/RAW/Operando1/Electrodep_C_P1/Mn/Electrodep_C_P1_XAS_Mn_K_1_21.dat scans_id: 160848 - 160848
+2025-12-12 00:27:02,485 - INFO     Calibrating electrometers...
+2025-12-12 00:27:02,680 - INFO     em_range e_i0_1 10uA e_i0_2 10uA e_i1_1 10uA e_i1_2 10uA 
+2025-12-12 00:28:40,367 - INFO     Scan done: /beamlines/bl22/projects/cycle2025-II/20250340369-skhabazian/DATA/RAW/Operando1/Electrodep_C_P1/Zn/Electrodep_C_P1_XAS_Zn_K_1_21.dat scans_id: 160849 - 160849
+2025-12-12 00:28:40,392 - INFO     Scan sample Electrodep_D_el
+2025-12-12 00:29:17,786 - INFO     Calibrating electrometers...
+2025-12-12 00:29:17,983 - INFO     em_range e_i0_1 1uA e_i0_2 1uA e_i1_1 1uA e_i1_2 1uA 
+2025-12-12 00:30:58,848 - INFO     Scan done: /beamlines/bl22/projects/cycle2025-II/20250340369-skhabazian/DATA/RAW/Operando1/Electrodep_D_el/Mn/Electrodep_D_el_XAS_Mn_K_1_21.dat scans_id: 160850 - 160850
+2025-12-12 00:30:59,065 - INFO     Calibrating electrometers...
+2025-12-12 00:30:59,261 - INFO     em_range e_i0_1 10uA e_i0_2 10uA e_i1_1 10uA e_i1_2 10uA 
+2025-12-12 00:32:36,868 - INFO     Scan done: /beamlines/bl22/projects/cycle2025-II/20250340369-skhabazian/DATA/RAW/Operando1/Electrodep_D_el/Zn/Electrodep_D_el_XAS_Zn_K_1_21.dat scans_id: 160851 - 160851
+2025-12-12 00:32:37,010 - INFO     Scan sample Electrodep_C_el
+2025-12-12 00:33:12,194 - INFO     Calibrating electrometers...
+2025-12-12 00:33:12,391 - INFO     em_range e_i0_1 1uA e_i0_2 1uA e_i1_1 1uA e_i1_2 1uA 
+2025-12-12 00:34:53,448 - INFO     Scan done: /beamlines/bl22/projects/cycle2025-II/20250340369-skhabazian/DATA/RAW/Operando1/Electrodep_C_el/Mn/Electrodep_C_el_XAS_Mn_K_1_21.dat scans_id: 160852 - 160852
+2025-12-12 00:34:53,767 - INFO     Calibrating electrometers...
+2025-12-12 00:34:53,964 - INFO     em_range e_i0_1 10uA e_i0_2 10uA e_i1_1 10uA e_i1_2 10uA 
+2025-12-12 00:36:31,425 - INFO     Scan done: /beamlines/bl22/projects/cycle2025-II/20250340369-skhabazian/DATA/RAW/Operando1/Electrodep_C_el/Zn/Electrodep_C_el_XAS_Zn_K_1_21.dat scans_id: 160853 - 160853
+2025-12-12 00:36:31,914 - INFO     Scan sample Electrodep_D_P2
+2025-12-12 00:37:03,156 - INFO     Calibrating electrometers...
+2025-12-12 00:37:03,354 - INFO     em_range e_i0_1 1uA e_i0_2 1uA e_i1_1 1uA e_i1_2 1uA 
+2025-12-12 00:38:44,887 - INFO     Scan done: /beamlines/bl22/projects/cycle2025-II/20250340369-skhabazian/DATA/RAW/Operando1/Electrodep_D_P2/Mn/Electrodep_D_P2_XAS_Mn_K_1_21.dat scans_id: 160854 - 160854
+2025-12-12 00:38:44,999 - INFO     Calibrating electrometers...
+2025-12-12 00:38:45,215 - INFO     em_range e_i0_1 10uA e_i0_2 10uA e_i1_1 10uA e_i1_2 10uA 
+2025-12-12 00:40:22,537 - INFO     Scan done: /beamlines/bl22/projects/cycle2025-II/20250340369-skhabazian/DATA/RAW/Operando1/Electrodep_D_P2/Zn/Electrodep_D_P2_XAS_Zn_K_1_21.dat scans_id: 160855 - 160855
+2025-12-12 00:40:22,600 - INFO     Scan sample Electrodep_C_P2
+2025-12-12 00:40:56,066 - INFO     Calibrating electrometers...
+2025-12-12 00:40:56,259 - INFO     em_range e_i0_1 1uA e_i0_2 1uA e_i1_1 1uA e_i1_2 1uA 
+2025-12-12 00:42:37,050 - INFO     Scan done: /beamlines/bl22/projects/cycle2025-II/20250340369-skhabazian/DATA/RAW/Operando1/Electrodep_C_P2/Mn/Electrodep_C_P2_XAS_Mn_K_1_21.dat scans_id: 160856 - 160856
+2025-12-12 00:42:37,615 - INFO     Calibrating electrometers...
+2025-12-12 00:42:37,810 - INFO     em_range e_i0_1 10uA e_i0_2 10uA e_i1_1 10uA e_i1_2 10uA 
+2025-12-12 00:44:15,131 - INFO     Scan done: /beamlines/bl22/projects/cycle2025-II/20250340369-skhabazian/DATA/RAW/Operando1/Electrodep_C_P2/Zn/Electrodep_C_P2_XAS_Zn_K_1_21.dat scans_id: 160857 - 160857

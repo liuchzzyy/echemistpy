@@ -1,0 +1,8 @@
+For Operando3, the echem files are mislabeled:
+
+CH3 should be buffer.
+CH4 should be buffer with Fe mediator.
+
+
+-----------
+2026_01_10 Corrected the folder name from Cell3_Buffers-2, Cell4_Buffers+Fe2+-2 to Cell3_Buffers+Fe2+-2, Cell4_Buffers-2

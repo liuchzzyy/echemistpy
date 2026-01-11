@@ -13,7 +13,7 @@ import xarray as xr
 from scipy.interpolate import interp1d
 from scipy.signal import medfilt, savgol_filter
 
-from echemistpy.core.elements import ELEMENT_DB
+from echemistpy.analysis.xas.elements import ELEMENT_DB
 
 try:
     from larch import Group  # type: ignore
