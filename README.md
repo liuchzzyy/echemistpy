@@ -76,9 +76,9 @@ uv run pytest
 ```mermaid
 graph LR
     A[Raw Files] --> B(IOPluginManager)
-    B --> C[RawData<br>(Standardized)]
+    B --> C[RawData - Standardized]
     C --> D{TechniqueAnalyzer}
-    D --> E[AnalysisData<br>(Processed)]
+    D --> E[AnalysisData - Processed]
 ```
 
 - **RawData**: 原始数据的标准化容器。
