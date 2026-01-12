@@ -49,6 +49,7 @@ nosetests.xml
 # 忽略临时或大容量构建文档（如果存在）
 docs/_build/
 docs/api/generated/
+docs/examples/
 
 
 Thumbs.db
