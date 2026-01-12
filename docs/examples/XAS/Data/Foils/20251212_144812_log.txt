@@ -1,9 +1,0 @@
-2025-12-12 14:48:12,112 - INFO     Start experiment run 1
-2025-12-12 14:48:12,231 - INFO     Scan sample Fe_foil_12_12_2025
-2025-12-12 14:51:23,806 - INFO     Scan done: /beamlines/bl22/projects/cycle2025-II/20250340369-skhabazian/DATA/RAW/Foils/Fe_foil_12_12_2025/Fe/Fe_foil_12_12_2025_XAS_Fe_K_1_0.dat scans_id: 161284 - 161284
-2025-12-12 14:54:21,068 - INFO     Scan done: /beamlines/bl22/projects/cycle2025-II/20250340369-skhabazian/DATA/RAW/Foils/Fe_foil_12_12_2025/Fe/Fe_foil_12_12_2025_XAS_Fe_K_2_1.dat scans_id: 161285 - 161285
-2025-12-12 14:57:19,600 - INFO     Scan done: /beamlines/bl22/projects/cycle2025-II/20250340369-skhabazian/DATA/RAW/Foils/Fe_foil_12_12_2025/Fe/Fe_foil_12_12_2025_XAS_Fe_K_3_2.dat scans_id: 161286 - 161286
-2025-12-12 14:57:19,760 - INFO     Scan sample Mn_foil_12_12_2025
-2025-12-12 15:00:27,273 - INFO     Scan done: /beamlines/bl22/projects/cycle2025-II/20250340369-skhabazian/DATA/RAW/Foils/Mn_foil_12_12_2025/Mn/Mn_foil_12_12_2025_XAS_Mn_K_1_0.dat scans_id: 161287 - 161287
-2025-12-12 15:03:19,699 - INFO     Scan done: /beamlines/bl22/projects/cycle2025-II/20250340369-skhabazian/DATA/RAW/Foils/Mn_foil_12_12_2025/Mn/Mn_foil_12_12_2025_XAS_Mn_K_2_1.dat scans_id: 161288 - 161288
-2025-12-12 15:06:12,160 - INFO     Scan done: /beamlines/bl22/projects/cycle2025-II/20250340369-skhabazian/DATA/RAW/Foils/Mn_foil_12_12_2025/Mn/Mn_foil_12_12_2025_XAS_Mn_K_3_2.dat scans_id: 161289 - 161289

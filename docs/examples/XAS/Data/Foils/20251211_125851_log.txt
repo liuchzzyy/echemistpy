@@ -1,3 +1,0 @@
-2025-12-11 12:58:51,462 - INFO     Start experiment run 1
-2025-12-11 12:58:51,586 - INFO     Scan sample MnFoil
-2025-12-11 13:01:46,442 - INFO     Scan done: /beamlines/bl22/projects/cycle2025-II/20250340369-skhabazian/DATA/RAW/Foils/MnFoil/Mn/MnFoil_XAS_Mn_K_1_1.dat scans_id: 160506 - 160506

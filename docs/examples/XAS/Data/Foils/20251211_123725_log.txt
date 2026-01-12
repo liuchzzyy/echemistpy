@@ -1,3 +1,0 @@
-2025-12-11 12:37:25,376 - INFO     Start experiment run 1
-2025-12-11 12:37:25,501 - INFO     Scan sample ZnFoil
-2025-12-11 12:40:14,682 - INFO     Scan done: /beamlines/bl22/projects/cycle2025-II/20250340369-skhabazian/DATA/RAW/Foils/ZnFoil/Zn/ZnFoil_XAS_Zn_K_1_0.dat scans_id: 160502 - 160502
